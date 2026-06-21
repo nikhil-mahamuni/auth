@@ -6,6 +6,7 @@ public record ClientRequest(
         @NotBlank String clientId,
         @NotBlank String clientName,
         @NotBlank String clientType,
+        String clientSecret,
         String allowedRedirectUrls,
         String allowedWebOrigins,
         Integer accessTokenTtlSeconds,

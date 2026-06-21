@@ -1,7 +1,7 @@
 package com.quberratrix.identity.security;
 
+import com.quberratrix.identity.config.properties.SecurityCorsProperties;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
@@ -15,7 +15,6 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 
-import java.util.Arrays;
 import java.util.List;
 
 @Configuration
@@ -23,9 +22,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    @Value("${security.cors.allowed-origins:}")
-    private String allowedOriginsStr;
-
+    private final SecurityCorsProperties corsProperties;
     private final JwtAuthenticationManager jwtAuthenticationManager;
     private final JwtAuthenticationConverter jwtAuthenticationConverter;
     private final GatewayEnforcementFilter gatewayEnforcementFilter;
@@ -59,11 +56,17 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        List<String> allowedOrigins = Arrays.asList(allowedOriginsStr.split(","));
+
+        List<String> allowedOrigins = corsProperties.getAllowedOrigins();
+        if (corsProperties.isAllowCredentials() && allowedOrigins.contains("*")) {
+            throw new IllegalStateException("CORS configured incorrectly: cannot use wildcard origins with allow-credentials=true in production");
+        }
+
         configuration.setAllowedOriginPatterns(allowedOrigins);
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
-        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With", "X-Gateway-Secret", "X-Device-Id", "X-Device-Name", "X-Device-Type", "X-Location", "X-Correlation-Id", "X-Request-Id"));
-        configuration.setAllowCredentials(true);
+        configuration.setAllowedMethods(corsProperties.getAllowedMethods());
+        configuration.setAllowedHeaders(corsProperties.getAllowedHeaders());
+        configuration.setAllowCredentials(corsProperties.isAllowCredentials());
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;

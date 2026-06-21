@@ -188,19 +188,38 @@ public class AdminController {
 
     @PostMapping("/clients")
     public Mono<ApiResponse<Client>> createClient(@Valid @RequestBody ClientRequest request) {
-        Client c = new Client();
-        c.setId(UUID.randomUUID());
-        c.setClientId(request.clientId());
-        c.setClientName(request.clientName());
-        c.setClientType(request.clientType());
-        c.setEnabled(true);
-        c.setAllowedRedirectUrls(request.allowedRedirectUrls());
-        c.setAllowedWebOrigins(request.allowedWebOrigins());
-        c.setAccessTokenTtlSeconds(request.accessTokenTtlSeconds());
-        c.setRefreshTokenTtlSeconds(request.refreshTokenTtlSeconds());
-        c.setCreatedAt(Instant.now());
-        c.setUpdatedAt(Instant.now());
-        return clientRepository.save(c).map(ApiResponse::success);
+        Mono<String> secretMono = Mono.justOrEmpty(request.clientSecret());
+
+        if ("CONFIDENTIAL".equals(request.clientType()) || "SERVICE".equals(request.clientType())) {
+            if (request.clientSecret() == null || request.clientSecret().isBlank()) {
+                return Mono.error(new IdentityException("Secret required for confidential clients", "SECRET_REQUIRED", HttpStatus.BAD_REQUEST));
+            }
+            secretMono = Mono.fromCallable(() -> passwordEncoder.encode(request.clientSecret()))
+                    .subscribeOn(Schedulers.boundedElastic());
+        }
+
+        return secretMono
+                .defaultIfEmpty("")
+                .flatMap(secretHash -> {
+                    Client c = new Client();
+                    c.setId(UUID.randomUUID());
+                    c.setClientId(request.clientId());
+                    c.setClientName(request.clientName());
+                    c.setClientType(request.clientType());
+                    c.setClientSecretHash(secretHash.isEmpty() ? null : secretHash);
+                    c.setEnabled(true);
+                    c.setAllowedRedirectUrls(request.allowedRedirectUrls());
+                    c.setAllowedWebOrigins(request.allowedWebOrigins());
+                    c.setAccessTokenTtlSeconds(request.accessTokenTtlSeconds());
+                    c.setRefreshTokenTtlSeconds(request.refreshTokenTtlSeconds());
+                    c.setCreatedAt(Instant.now());
+                    c.setUpdatedAt(Instant.now());
+                    return clientRepository.save(c);
+                }).map(savedClient -> {
+                    // Do not leak secret hash back
+                    savedClient.setClientSecretHash(null);
+                    return ApiResponse.success(savedClient);
+                });
     }
 
     @PostMapping("/clients/{id}/enable")

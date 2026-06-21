@@ -1,6 +1,7 @@
 package com.quberratrix.identity.security;
 
 import com.quberratrix.identity.jwks.JwtService;
+import com.quberratrix.identity.tokens.RevokedAccessTokenRepository;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.ReactiveAuthenticationManager;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Component
@@ -18,7 +20,7 @@ import java.util.stream.Collectors;
 public class JwtAuthenticationManager implements ReactiveAuthenticationManager {
 
     private final JwtService jwtService;
-    // Removed DB check from normal JWT validation as requested. It is now strictly stateless.
+    private final RevokedAccessTokenRepository revokedAccessTokenRepository;
 
     @Override
     @SuppressWarnings("unchecked")
@@ -31,12 +33,24 @@ public class JwtAuthenticationManager implements ReactiveAuthenticationManager {
             return Mono.empty();
         }
 
-        String subject = claims.getSubject();
-        List<String> roles = claims.get("roles", List.class);
-        List<SimpleGrantedAuthority> authorities = roles.stream()
-                .map(SimpleGrantedAuthority::new)
-                .collect(Collectors.toList());
+        String jti = claims.getId();
+        if (jti == null) {
+            return Mono.empty();
+        }
 
-        return Mono.just(new UsernamePasswordAuthenticationToken(subject, authToken, authorities));
+        return revokedAccessTokenRepository.existsByJti(UUID.fromString(jti))
+                .flatMap(revoked -> {
+                    if (revoked) {
+                        return Mono.empty();
+                    }
+
+                    String subject = claims.getSubject();
+                    List<String> roles = claims.get("roles", List.class);
+                    List<SimpleGrantedAuthority> authorities = roles.stream()
+                            .map(SimpleGrantedAuthority::new)
+                            .collect(Collectors.toList());
+
+                    return Mono.just(new UsernamePasswordAuthenticationToken(subject, authToken, authorities));
+                });
     }
 }

@@ -1,16 +1,18 @@
 package com.quberratrix.identity.jwks;
 
 import com.quberratrix.identity.common.IdentityException;
+import com.quberratrix.identity.config.properties.JwtProperties;
+import com.quberratrix.identity.config.properties.TokenProperties;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.asn1.pkcs.PrivateKeyInfo;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.openssl.PEMKeyPair;
 import org.bouncycastle.openssl.PEMParser;
 import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.http.HttpStatus;
@@ -28,51 +30,30 @@ import java.util.UUID;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class JwtService {
 
-    @Value("${security.jwt.issuer}")
-    private String issuer;
-
-    @Value("${security.jwt.audience}")
-    private String audience;
-
-    @Value("${security.jwt.access-token-ttl-seconds}")
-    private long accessTokenTtlSeconds;
-
-    @Value("${security.jwt.private-key-path:}")
-    private String privateKeyPath;
-
-    @Value("${security.jwt.public-key-path:}")
-    private String publicKeyPath;
-
-    @Value("${security.jwt.dev-generate-keypair}")
-    private boolean devGenerateKeypair;
-
-    @Value("${security.jwt.kid:default-kid-1}")
-    private String configuredKid;
-
+    private final JwtProperties jwtProperties;
+    private final TokenProperties tokenProperties;
     private final ResourceLoader resourceLoader;
 
     private PrivateKey privateKey;
     private PublicKey publicKey;
     private String keyId;
 
-    public JwtService(ResourceLoader resourceLoader) {
-        this.resourceLoader = resourceLoader;
-    }
-
     @PostConstruct
     public void init() {
         try {
-            if (privateKeyPath != null && !privateKeyPath.isBlank() && publicKeyPath != null && !publicKeyPath.isBlank()) {
+            if (jwtProperties.getPrivateKeyPath() != null && !jwtProperties.getPrivateKeyPath().isBlank() &&
+                jwtProperties.getPublicKeyPath() != null && !jwtProperties.getPublicKeyPath().isBlank()) {
                 loadKeys();
-                keyId = configuredKid;
+                keyId = jwtProperties.getKid();
                 log.info("JWT keys loaded successfully from paths with kid: {}", keyId);
             } else {
                 throw new IllegalStateException("Key paths are empty");
             }
         } catch (Exception e) {
-            if (devGenerateKeypair) {
+            if (jwtProperties.isDevGenerateKeypair()) {
                 log.warn("Failed to load keys from paths, generating dev keypair...");
                 generateDevKeys();
             } else {
@@ -83,8 +64,8 @@ public class JwtService {
     }
 
     private void loadKeys() throws Exception {
-        Resource privateKeyRes = resourceLoader.getResource(privateKeyPath);
-        Resource publicKeyRes = resourceLoader.getResource(publicKeyPath);
+        Resource privateKeyRes = resourceLoader.getResource(jwtProperties.getPrivateKeyPath());
+        Resource publicKeyRes = resourceLoader.getResource(jwtProperties.getPublicKeyPath());
 
         JcaPEMKeyConverter converter = new JcaPEMKeyConverter();
 
@@ -117,7 +98,7 @@ public class JwtService {
             KeyPair keyPair = keyPairGenerator.generateKeyPair();
             this.privateKey = keyPair.getPrivate();
             this.publicKey = keyPair.getPublic();
-            this.keyId = configuredKid;
+            this.keyId = jwtProperties.getKid();
         } catch (Exception e) {
             throw new RuntimeException("Failed to generate dev keys", e);
         }
@@ -127,19 +108,19 @@ public class JwtService {
         Instant now = Instant.now();
         return Jwts.builder()
                 .header().keyId(keyId).and()
-                .issuer(issuer)
+                .issuer(jwtProperties.getIssuer())
                 .subject(userId != null ? userId.toString() : null)
-                .audience().add(audience).and()
+                .audience().add(jwtProperties.getAudience()).and()
                 .id(UUID.randomUUID().toString()) // jti
                 .issuedAt(Date.from(now)) // iat
-                .expiration(Date.from(now.plusSeconds(accessTokenTtlSeconds))) // exp
+                .expiration(Date.from(now.plusSeconds(tokenProperties.getAccessTokenTtl().getSeconds()))) // exp
                 .claims(Map.of(
                         "email", email != null ? email : "",
                         "user_type", userType != null ? userType : "",
                         "roles", roles,
                         "client_id", clientId.toString(),
                         "sid", sessionId != null ? sessionId.toString() : "",
-                        "typ", "Bearer",
+                        "typ", "JWT", // Required typ
                         "token_use", "access"
                 ))
                 .signWith(privateKey, Jwts.SIG.RS256)
@@ -150,14 +131,17 @@ public class JwtService {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(publicKey)
-                    .requireIssuer(issuer)
-                    .requireAudience(audience)
+                    .requireIssuer(jwtProperties.getIssuer())
+                    .requireAudience(jwtProperties.getAudience())
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
 
             if (!"access".equals(claims.get("token_use"))) {
                 throw new IdentityException("Invalid token use", "INVALID_TOKEN", HttpStatus.UNAUTHORIZED);
+            }
+            if (!"JWT".equals(claims.get("typ"))) {
+                 throw new IdentityException("Invalid token typ", "INVALID_TOKEN", HttpStatus.UNAUTHORIZED);
             }
 
             return claims;

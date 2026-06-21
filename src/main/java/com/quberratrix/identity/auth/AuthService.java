@@ -4,6 +4,7 @@ import com.quberratrix.identity.audit.AuditService;
 import com.quberratrix.identity.clients.Client;
 import com.quberratrix.identity.clients.ClientRepository;
 import com.quberratrix.identity.common.IdentityException;
+import com.quberratrix.identity.config.properties.AuthProperties;
 import com.quberratrix.identity.jwks.JwtService;
 import com.quberratrix.identity.roles.Role;
 import com.quberratrix.identity.roles.RoleRepository;
@@ -14,6 +15,7 @@ import com.quberratrix.identity.tokens.RefreshToken;
 import com.quberratrix.identity.tokens.RefreshTokenRepository;
 import com.quberratrix.identity.tokens.RevokedAccessToken;
 import com.quberratrix.identity.tokens.RevokedAccessTokenRepository;
+import com.quberratrix.identity.tokens.TokenServices;
 import com.quberratrix.identity.users.LoginAttempt;
 import com.quberratrix.identity.users.LoginAttemptRepository;
 import com.quberratrix.identity.users.User;
@@ -30,7 +32,6 @@ import reactor.core.scheduler.Schedulers;
 
 import java.security.SecureRandom;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +53,8 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final AuditService auditService;
+    private final AuthProperties authProperties;
+    private final TokenServices tokenServices;
 
     private Mono<String> encodePassword(String rawPassword) {
         return Mono.fromCallable(() -> passwordEncoder.encode(rawPassword))
@@ -78,6 +81,7 @@ public class AuthService {
                             newUser.setDisplayName(request.displayName());
                             newUser.setUserType("PUBLIC_USER");
                             newUser.setStatus("ACTIVE");
+                            newUser.setEmailVerified(false);
                             newUser.setCreatedAt(Instant.now());
                             newUser.setUpdatedAt(Instant.now());
                             newUser.setPasswordUpdatedAt(Instant.now());
@@ -93,7 +97,10 @@ public class AuthService {
                                             savedUser.getId(),
                                             null, null, ipAddress, userAgent, correlationId, requestId,
                                             Map.of("email", savedUser.getEmail())
-                                    ).thenReturn(savedUser));
+                                    ).thenReturn(savedUser))
+                                    .flatMap(savedUser -> tokenServices.requestEmailVerification(savedUser.getEmail(), ipAddress, userAgent, correlationId, requestId)
+                                            .thenReturn(savedUser)
+                                    );
                         })));
     }
 
@@ -113,7 +120,7 @@ public class AuthService {
     }
 
     private Mono<LoginResult> handleLoginAttempt(User user, String rawPassword, Client client, String ipAddress, String userAgent, String deviceId, String deviceName, String deviceType, String location, String correlationId, String requestId) {
-        if ("DISABLED".equals(user.getStatus()) || "LOCKED".equals(user.getStatus()) || (user.getLockedUntil() != null && user.getLockedUntil().isAfter(Instant.now()))) {
+        if ("DISABLED".equals(user.getStatus()) || "DELETED".equals(user.getStatus()) || "LOCKED".equals(user.getStatus()) || (user.getLockedUntil() != null && user.getLockedUntil().isAfter(Instant.now()))) {
             return logAttempt(user.getId(), user.getEmail(), client.getId(), false, "account_locked_or_disabled", ipAddress, userAgent, correlationId, requestId)
                     .then(auditService.logAndPublishEvent("USER_LOGIN_FAILED_LOCKED", user.getId(), user.getId(), client.getId(), null, ipAddress, userAgent, correlationId, requestId, Map.of()))
                     .then(Mono.error(new IdentityException("Account is locked or disabled", "ACCOUNT_LOCKED", HttpStatus.FORBIDDEN)));
@@ -155,8 +162,8 @@ public class AuthService {
     private Mono<LoginResult> handleFailedLogin(User user, Client client, String ipAddress, String userAgent, String correlationId, String requestId) {
         user.setFailedLoginAttempts(user.getFailedLoginAttempts() + 1);
         user.setNotNew();
-        if (user.getFailedLoginAttempts() >= 5) {
-            user.setLockedUntil(Instant.now().plus(15, ChronoUnit.MINUTES));
+        if (user.getFailedLoginAttempts() >= authProperties.getLogin().getMaxFailedAttempts()) {
+            user.setLockedUntil(Instant.now().plus(authProperties.getLogin().getLockDuration()));
             return userRepository.save(user)
                     .flatMap(savedUser -> logAttempt(user.getId(), user.getEmail(), client.getId(), false, "max_attempts_reached", ipAddress, userAgent, correlationId, requestId))
                     .then(auditService.logAndPublishEvent("USER_LOCKED", user.getId(), user.getId(), client.getId(), null, ipAddress, userAgent, correlationId, requestId, Map.of("reason", "max_attempts")))
@@ -190,10 +197,10 @@ public class AuthService {
         return refreshTokenRepository.findByTokenHash(hashedToken)
                 .switchIfEmpty(Mono.error(new IdentityException("Invalid refresh token", "INVALID_TOKEN", HttpStatus.UNAUTHORIZED)))
                 .flatMap(refreshToken -> {
-                    if ("REVOKED".equals(refreshToken.getStatus()) || "REUSED".equals(refreshToken.getStatus()) || refreshToken.getExpiresAt().isBefore(Instant.now())) {
+                    if (!"ACTIVE".equals(refreshToken.getStatus()) || refreshToken.getExpiresAt().isBefore(Instant.now())) {
 
-                        // Reuse detection logic
-                        if ("ROTATED".equals(refreshToken.getStatus())) {
+                        // Reuse detection logic: any status other than ACTIVE means it was already used or revoked
+                        if ("ROTATED".equals(refreshToken.getStatus()) || "REUSED".equals(refreshToken.getStatus()) || "REVOKED".equals(refreshToken.getStatus())) {
                             refreshToken.setStatus("REUSED");
                             refreshToken.setNotNew();
                             return refreshTokenRepository.save(refreshToken)
@@ -202,13 +209,13 @@ public class AuthService {
                                     .then(Mono.error(new IdentityException("Token reuse detected. Session revoked.", "TOKEN_REUSE_DETECTED", HttpStatus.UNAUTHORIZED)));
                         }
 
-                        return Mono.error(new IdentityException("Token expired or revoked", "TOKEN_EXPIRED", HttpStatus.UNAUTHORIZED));
+                        return Mono.error(new IdentityException("Token expired or invalid", "TOKEN_EXPIRED", HttpStatus.UNAUTHORIZED));
                     }
 
                     return clientRepository.findById(refreshToken.getClientId())
                             .flatMap(client -> userRepository.findById(refreshToken.getUserId())
                                     .flatMap(user -> {
-                                         if ("DISABLED".equals(user.getStatus()) || "LOCKED".equals(user.getStatus()) || (user.getLockedUntil() != null && user.getLockedUntil().isAfter(Instant.now())) || !client.isEnabled()) {
+                                         if ("DISABLED".equals(user.getStatus()) || "DELETED".equals(user.getStatus()) || "LOCKED".equals(user.getStatus()) || (user.getLockedUntil() != null && user.getLockedUntil().isAfter(Instant.now())) || !client.isEnabled()) {
                                               return Mono.error(new IdentityException("Account locked or client disabled", "ACCOUNT_LOCKED", HttpStatus.FORBIDDEN));
                                          }
 
@@ -253,7 +260,7 @@ public class AuthService {
 
                             return refreshTokenRepository.save(refreshToken)
                                     .flatMap(rt -> {
-                                        AuthResponse authResponse = new AuthResponse(accessToken, "Bearer", 900L);
+                                        AuthResponse authResponse = new AuthResponse(accessToken, "JWT", 900L);
                                         return auditService.logAndPublishEvent("TOKEN_REFRESHED", user.getId(), user.getId(), client.getId(), session.getId(), ipAddress, userAgent, correlationId, requestId, Map.of())
                                                 .thenReturn(new LoginResult(authResponse, rawRefreshToken, refreshTokenTtl));
                                     });
@@ -315,14 +322,8 @@ public class AuthService {
                     token.setRevokeReason("user_logout");
                     token.setNotNew();
                     return refreshTokenRepository.save(token)
-                            .flatMap(t -> sessionRepository.findById(t.getSessionId()))
-                            .flatMap(session -> {
-                                session.setStatus("REVOKED");
-                                session.setRevokedAt(Instant.now());
-                                session.setNotNew();
-                                return sessionRepository.save(session);
-                            })
-                            .flatMap(s -> auditService.logAndPublishEvent("USER_LOGOUT", token.getUserId(), token.getUserId(), token.getClientId(), token.getSessionId(), ipAddress, userAgent, correlationId, requestId, Map.of()));
+                            .flatMap(t -> revokeFamily(token.getFamilyId(), token.getSessionId(), "user_logout"))
+                            .then(auditService.logAndPublishEvent("USER_LOGOUT", token.getUserId(), token.getUserId(), token.getClientId(), token.getSessionId(), ipAddress, userAgent, correlationId, requestId, Map.of()));
                 }).then();
 
         return revokeAccessMono.then(revokeRefreshMono);
@@ -336,7 +337,7 @@ public class AuthService {
                     session.setRevokedAt(Instant.now());
                     session.setNotNew();
                     return sessionRepository.save(session)
-                            .flatMap(s -> refreshTokenRepository.deleteBySessionId(s.getId()));
+                            .flatMap(s -> revokeFamily(s.getRefreshTokenFamilyId(), s.getId(), "user_logout_all"));
                 })
                 .then(auditService.logAndPublishEvent("USER_LOGOUT_ALL", userId, userId, null, null, ipAddress, userAgent, correlationId, requestId, Map.of()))
                 .then();
@@ -385,7 +386,7 @@ public class AuthService {
 
                             return refreshTokenRepository.save(refreshToken)
                                     .flatMap(rt -> {
-                                        AuthResponse authResponse = new AuthResponse(accessToken, "Bearer", 900L);
+                                        AuthResponse authResponse = new AuthResponse(accessToken, "JWT", 900L);
                                         return auditService.logAndPublishEvent("USER_LOGIN", user.getId(), user.getId(), client.getId(), savedSession.getId(), ipAddress, userAgent, correlationId, requestId, Map.of())
                                                 .thenReturn(new LoginResult(authResponse, rawRefreshToken, refreshTokenTtl));
                                     });

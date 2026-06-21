@@ -2,6 +2,7 @@ package com.quberratrix.identity.tokens;
 
 import com.quberratrix.identity.audit.AuditService;
 import com.quberratrix.identity.common.IdentityException;
+import com.quberratrix.identity.config.properties.TokenProperties;
 import com.quberratrix.identity.users.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -13,7 +14,6 @@ import reactor.core.scheduler.Schedulers;
 
 import java.security.SecureRandom;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.Map;
 import java.util.UUID;
@@ -27,6 +27,7 @@ public class TokenServices {
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final AuditService auditService;
     private final PasswordEncoder passwordEncoder;
+    private final TokenProperties tokenProperties;
 
     private String generateOpaqueToken() {
         SecureRandom random = new SecureRandom();
@@ -59,14 +60,14 @@ public class TokenServices {
                     token.setTokenHash(hashedToken);
                     token.setUserId(user.getId());
                     token.setIssuedAt(Instant.now());
-                    token.setExpiresAt(Instant.now().plus(24, ChronoUnit.HOURS));
+                    token.setExpiresAt(Instant.now().plusSeconds(tokenProperties.getEmailVerificationTokenTtl().getSeconds()));
                     token.setUsed(false);
 
                     return emailVerificationTokenRepository.save(token)
                             .flatMap(saved -> auditService.logAndPublishEvent(
                                     "EMAIL_VERIFICATION_REQUESTED",
                                     user.getId(), user.getId(), null, null, ipAddress, userAgent, correlationId, requestId,
-                                    Map.of("email", email, "token", rawToken)
+                                    Map.of("email", email) // Fix raw token leakage
                             ));
                 }).then();
     }
@@ -109,14 +110,14 @@ public class TokenServices {
                     token.setTokenHash(hashedToken);
                     token.setUserId(user.getId());
                     token.setIssuedAt(Instant.now());
-                    token.setExpiresAt(Instant.now().plus(1, ChronoUnit.HOURS));
+                    token.setExpiresAt(Instant.now().plusSeconds(tokenProperties.getPasswordResetTokenTtl().getSeconds()));
                     token.setUsed(false);
 
                     return passwordResetTokenRepository.save(token)
                             .flatMap(saved -> auditService.logAndPublishEvent(
                                     "PASSWORD_RESET_REQUESTED",
                                     user.getId(), user.getId(), null, null, ipAddress, userAgent, correlationId, requestId,
-                                    Map.of("email", email, "token", rawToken)
+                                    Map.of("email", email) // Fix raw token leakage
                             ));
                 }).then();
     }
