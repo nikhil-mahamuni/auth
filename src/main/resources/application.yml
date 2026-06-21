@@ -1,10 +1,14 @@
-server:
-  port: 8080
-
 spring:
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
   application:
     name: quberratrix-identity-service
 
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
   r2dbc:
     url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:identity_db}
     username: ${DB_USER:identity_user}
@@ -12,58 +16,76 @@ spring:
     pool:
       initial-size: 5
       max-size: 20
-      max-idle-time: 30m
-      validation-query: SELECT 1
-
   flyway:
     enabled: true
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:identity_db}
     user: ${DB_USER:identity_user}
     password: ${DB_PASSWORD:identity_pass}
-    baseline-on-migrate: true
-
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.apache.kafka.common.serialization.StringSerializer
-      properties:
-        acks: all
-        retries: 3
-        max.in.flight.requests.per.connection: 1
 
 security:
   jwt:
-    issuer: ${JWT_ISSUER:https://identity.quberratrix.com}
-    audience: ${JWT_AUDIENCE:quberratrix}
-    access-token-ttl-seconds: ${ACCESS_TOKEN_TTL:900} # 15 minutes
-    refresh-token-ttl-seconds: ${REFRESH_TOKEN_TTL:2592000} # 30 days
-    # File paths for RSA keys, if not set, service should ideally fail to start in production
-    private-key-path: ${JWT_PRIVATE_KEY_PATH:classpath:keys/private_key.pem}
-    public-key-path: ${JWT_PUBLIC_KEY_PATH:classpath:keys/public_key.pem}
-    dev-generate-keypair: ${DEV_GENERATE_KEYPAIR:true} # Set to false in prod
-
+    issuer: https://dev-identity.quberratrix.com
+    audience: quberratrix
+    access-token-ttl-seconds: 900
+    refresh-token-ttl-seconds: 2592000
+    dev-generate-keypair: true
+    kid: dev-key-1
   cors:
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
-    allowed-methods: GET,POST,PUT,DELETE,OPTIONS
-    allowed-headers: Authorization,Content-Type,X-Requested-With
-    allow-credentials: true
-
-management:
-  metrics:
-    tags:
-      application: ${spring.application.name}
-  endpoints:
-    web:
-      exposure:
-        include: health,info,metrics,prometheus
-  endpoint:
-    health:
-      show-details: always
+    allowed-origins: http://localhost:3000,http://localhost:8080
 
 logging:
   level:
     root: INFO
     com.quberratrix: DEBUG
-    org.springframework.r2dbc: INFO
-    org.springframework.security: DEBUG
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+  r2dbc:
+    url: r2dbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}?sslmode=verify-full
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    pool:
+      initial-size: 20
+      max-size: 100
+  flyway:
+    enabled: true
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}?sslmode=verify-full
+    user: ${DB_USER}
+    password: ${DB_PASSWORD}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+
+security:
+  jwt:
+    issuer: ${JWT_ISSUER:https://identity.quberratrix.com}
+    audience: ${JWT_AUDIENCE:quberratrix}
+    access-token-ttl-seconds: ${ACCESS_TOKEN_TTL:900}
+    refresh-token-ttl-seconds: ${REFRESH_TOKEN_TTL:2592000}
+    private-key-path: ${JWT_PRIVATE_KEY_PATH}
+    public-key-path: ${JWT_PUBLIC_KEY_PATH}
+    dev-generate-keypair: false
+    kid: ${JWT_KID}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS}
+  gateway:
+    enforce: true
+    secret: ${GATEWAY_SECRET}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+
+logging:
+  level:
+    root: WARN
+    com.quberratrix: INFO
