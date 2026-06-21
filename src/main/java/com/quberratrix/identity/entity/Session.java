@@ -8,8 +8,8 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Data
-@Table("sessions")
-public class Session {
+@Table("identity_sessions")
+public class Session extends PersistableEntity {
     @Id
     private UUID id;
     private UUID userId;
@@ -20,4 +20,10 @@ public class Session {
     private Instant createdAt;
     private Instant expiresAt;
     private Instant lastAccessedAt;
+    private String deviceId;
+    private String deviceName;
+    private String deviceType;
+    private String location;
+    private UUID refreshTokenFamilyId;
+    private Instant revokedAt;
 }

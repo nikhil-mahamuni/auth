@@ -15,10 +15,8 @@ import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.util.FileCopyUtils;
 
 import java.io.InputStreamReader;
-import java.io.StringReader;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.PrivateKey;
@@ -50,6 +48,9 @@ public class JwtService {
     @Value("${security.jwt.dev-generate-keypair}")
     private boolean devGenerateKeypair;
 
+    @Value("${security.jwt.kid:default-kid-1}")
+    private String configuredKid;
+
     private final ResourceLoader resourceLoader;
 
     private PrivateKey privateKey;
@@ -64,7 +65,7 @@ public class JwtService {
     public void init() {
         try {
             loadKeys();
-            keyId = UUID.randomUUID().toString(); // Use a fixed or loaded kid in real prod
+            keyId = configuredKid;
             log.info("JWT keys initialized successfully with kid: {}", keyId);
         } catch (Exception e) {
             if (devGenerateKeypair) {
@@ -112,7 +113,7 @@ public class JwtService {
             KeyPair keyPair = keyPairGenerator.generateKeyPair();
             this.privateKey = keyPair.getPrivate();
             this.publicKey = keyPair.getPublic();
-            this.keyId = "dev-key-1";
+            this.keyId = configuredKid;
         } catch (Exception e) {
             throw new RuntimeException("Failed to generate dev keys", e);
         }
@@ -125,15 +126,15 @@ public class JwtService {
                 .issuer(issuer)
                 .subject(userId.toString())
                 .audience().add(audience).and()
-                .id(UUID.randomUUID().toString())
-                .issuedAt(Date.from(now))
-                .expiration(Date.from(now.plusSeconds(accessTokenTtlSeconds)))
+                .id(UUID.randomUUID().toString()) // jti
+                .issuedAt(Date.from(now)) // iat
+                .expiration(Date.from(now.plusSeconds(accessTokenTtlSeconds))) // exp
                 .claims(Map.of(
                         "email", email,
-                        "type", userType,
+                        "typ", "Bearer",
                         "roles", roles,
                         "client_id", clientId.toString(),
-                        "session_id", sessionId.toString()
+                        "sid", sessionId.toString()
                 ))
                 .signWith(privateKey, Jwts.SIG.RS256)
                 .compact();

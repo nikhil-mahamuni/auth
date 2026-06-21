@@ -8,8 +8,8 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Data
-@Table("clients")
-public class Client {
+@Table("identity_clients")
+public class Client extends PersistableEntity {
     @Id
     private UUID id;
     private String clientId;

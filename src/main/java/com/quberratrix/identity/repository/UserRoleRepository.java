@@ -11,10 +11,10 @@ import java.util.UUID;
 public interface UserRoleRepository extends ReactiveCrudRepository<UserRole, UUID> {
 
     @Modifying
-    @Query("INSERT INTO user_roles (user_id, role_id) VALUES (:userId, :roleId)")
+    @Query("INSERT INTO identity_user_roles (id, user_id, role_id) VALUES (gen_random_uuid(), :userId, :roleId)")
     Mono<Void> assignRole(UUID userId, UUID roleId);
 
     @Modifying
-    @Query("DELETE FROM user_roles WHERE user_id = :userId")
+    @Query("DELETE FROM identity_user_roles WHERE user_id = :userId")
     Mono<Void> deleteRolesByUserId(UUID userId);
 }

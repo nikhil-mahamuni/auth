@@ -50,6 +50,9 @@ security:
     allow-credentials: true
 
 management:
+  metrics:
+    tags:
+      application: ${spring.application.name}
   endpoints:
     web:
       exposure:

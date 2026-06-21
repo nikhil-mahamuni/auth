@@ -8,8 +8,8 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Data
-@Table("users")
-public class User {
+@Table("identity_users")
+public class User extends PersistableEntity {
     @Id
     private UUID id;
     private String email;
@@ -25,4 +25,6 @@ public class User {
     private Instant lastLogin;
     private Instant createdAt;
     private Instant updatedAt;
+    private Instant lockedUntil;
+    private Instant passwordUpdatedAt;
 }

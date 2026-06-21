@@ -8,11 +8,13 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Data
-@Table("identity_roles")
-public class Role extends PersistableEntity {
+@Table("identity_email_verification_tokens")
+public class EmailVerificationToken extends PersistableEntity {
     @Id
     private UUID id;
-    private String name;
-    private String description;
-    private Instant createdAt;
+    private String tokenHash;
+    private UUID userId;
+    private Instant issuedAt;
+    private Instant expiresAt;
+    private boolean used;
 }

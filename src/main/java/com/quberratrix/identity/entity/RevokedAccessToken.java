@@ -8,11 +8,12 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Data
-@Table("identity_roles")
-public class Role extends PersistableEntity {
+@Table("identity_revoked_access_tokens")
+public class RevokedAccessToken extends PersistableEntity {
     @Id
     private UUID id;
-    private String name;
-    private String description;
-    private Instant createdAt;
+    private UUID jti;
+    private UUID userId;
+    private Instant revokedAt;
+    private Instant expiresAt;
 }

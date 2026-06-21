@@ -77,6 +77,10 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
 
         <!-- Reactor Kafka -->
         <dependency>
@@ -158,3 +162,4 @@
         </plugins>
     </build>
 </project>
+<!-- adding prometheus missing block locally using sed -->
