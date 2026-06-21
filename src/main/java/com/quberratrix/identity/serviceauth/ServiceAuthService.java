@@ -1,10 +1,10 @@
 package com.quberratrix.identity.serviceauth;
 
 import com.quberratrix.identity.audit.AuditService;
+import com.quberratrix.identity.auth.AuthResponse;
 import com.quberratrix.identity.clients.ClientRepository;
 import com.quberratrix.identity.common.IdentityException;
-import com.quberratrix.identity.auth.AuthResponse;
-import com.quberratrix.identity.serviceauth.ServiceTokenRequest;
+import com.quberratrix.identity.config.properties.TokenProperties;
 import com.quberratrix.identity.jwks.JwtService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -25,6 +25,7 @@ public class ServiceAuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final AuditService auditService;
+    private final TokenProperties tokenProperties;
 
     private Mono<Boolean> matchesPassword(String rawPassword, String encodedPassword) {
         return Mono.fromCallable(() -> passwordEncoder.matches(rawPassword, encodedPassword))
@@ -46,12 +47,15 @@ public class ServiceAuthService {
                                             .then(Mono.error(new IdentityException("Invalid credentials", "INVALID_CREDENTIALS", HttpStatus.UNAUTHORIZED)));
                                 }
 
-                                String accessToken = jwtService.generateAccessToken(
-                                        client.getId(), client.getClientId(), "SERVICE", List.of("ROLE_SERVICE"), client.getId(), client.getId()
+                                Long clientTtl = client.getAccessTokenTtlSeconds() != null ? Long.valueOf(client.getAccessTokenTtlSeconds()) : null;
+                                String accessToken = jwtService.generateServiceToken(
+                                        client.getId(), List.of("ROLE_SERVICE"), clientTtl
                                 );
 
+                                long ttlResponse = clientTtl != null ? clientTtl : tokenProperties.getAccessTokenTtl().getSeconds();
+
                                 return auditService.logAndPublishEvent("SERVICE_TOKEN_ISSUED", client.getId(), null, client.getId(), null, ipAddress, userAgent, correlationId, requestId, Map.of())
-                                        .thenReturn(new AuthResponse(accessToken, "Bearer", 900L));
+                                        .thenReturn(new AuthResponse(accessToken, "Bearer", ttlResponse));
                             });
                 });
     }

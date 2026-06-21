@@ -2,12 +2,9 @@ package com.quberratrix.identity.events;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.clients.producer.ProducerRecord;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
-import reactor.kafka.sender.KafkaSender;
-import reactor.kafka.sender.SenderRecord;
 
 import java.time.Instant;
 import java.util.Map;
@@ -17,17 +14,15 @@ import java.util.UUID;
 @Component
 public class IdentityEventPublisher {
 
-    private final KafkaSender<String, String> sender;
     private final ObjectMapper objectMapper;
+    private final EventOutboxRepository outboxRepository;
 
     @Value("${spring.application.name}")
     private String applicationName;
 
-    private static final String TOPIC_NAME = "identity-events";
-
-    public IdentityEventPublisher(KafkaSender<String, String> sender, ObjectMapper objectMapper) {
-        this.sender = sender;
+    public IdentityEventPublisher(ObjectMapper objectMapper, EventOutboxRepository outboxRepository) {
         this.objectMapper = objectMapper;
+        this.outboxRepository = outboxRepository;
     }
 
     public Mono<Void> publishEvent(String eventType, UUID actorUserId, UUID targetUserId, UUID clientId, UUID sessionId, String ipAddress, String userAgent, String correlationId, String requestId, Map<String, Object> payload) {
@@ -50,16 +45,24 @@ public class IdentityEventPublisher {
 
         return Mono.fromCallable(() -> objectMapper.writeValueAsString(envelope))
                 .flatMap(json -> {
-                    ProducerRecord<String, String> record = new ProducerRecord<>(TOPIC_NAME, envelope.getEventId(), json);
-                    SenderRecord<String, String, String> senderRecord = SenderRecord.create(record, envelope.getEventId());
+                    EventOutbox outbox = new EventOutbox();
+                    outbox.setId(UUID.randomUUID());
+                    outbox.setAggregateType("identity");
+                    outbox.setAggregateId(targetUserId != null ? targetUserId : actorUserId);
+                    outbox.setEventType(eventType);
+                    outbox.setEventVersion("v1");
+                    outbox.setPayload(json);
+                    outbox.setHeaders("{}"); // Minimal headers
+                    outbox.setStatus("PENDING");
+                    outbox.setRetryCount(0);
+                    outbox.setCreatedAt(Instant.now());
 
-                    return sender.send(Mono.just(senderRecord))
-                            .doOnError(e -> log.error("Failed to publish event {}", eventType, e))
-                            .then();
+                    return outboxRepository.save(outbox);
                 })
                 .onErrorResume(e -> {
-                    log.error("Serialization or sending failed for event: " + eventType, e);
+                    log.error("Serialization or Outbox insert failed for event: " + eventType, e);
                     return Mono.empty();
-                });
+                })
+                .then();
     }
 }

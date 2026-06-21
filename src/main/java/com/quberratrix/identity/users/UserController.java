@@ -4,8 +4,9 @@ import com.quberratrix.identity.auth.AuthService;
 import com.quberratrix.identity.common.ApiResponse;
 import com.quberratrix.identity.common.CorrelationIdWebFilter;
 import com.quberratrix.identity.common.IdentityException;
-import com.quberratrix.identity.sessions.Session;
 import com.quberratrix.identity.sessions.SessionRepository;
+import com.quberratrix.identity.sessions.SessionMapper;
+import com.quberratrix.identity.sessions.SessionResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -39,6 +40,10 @@ public class UserController {
         return exchange.getRequest().getRemoteAddress() != null ? exchange.getRequest().getRemoteAddress().getAddress().getHostAddress() : "unknown";
     }
 
+    private String getUa(ServerWebExchange exchange) {
+        return exchange.getRequest().getHeaders().getFirst(HttpHeaders.USER_AGENT);
+    }
+
     private String getCorrelationId(ServerWebExchange exchange) {
         Object correlationId = exchange.getAttributes().get(CorrelationIdWebFilter.CORRELATION_ID_KEY);
         return correlationId != null ? correlationId.toString() : "";
@@ -49,11 +54,15 @@ public class UserController {
         return requestId != null ? requestId.toString() : "";
     }
 
-    private String getUa(ServerWebExchange exchange) {
-        return exchange.getRequest().getHeaders().getFirst(HttpHeaders.USER_AGENT);
+    @GetMapping
+    public Mono<ApiResponse<UserResponse>> getProfile() {
+        return getCurrentUserId()
+                .flatMap(userRepository::findById)
+                .switchIfEmpty(Mono.error(new IdentityException("User not found", "USER_NOT_FOUND", HttpStatus.NOT_FOUND)))
+                .map(UserMapper::toResponse)
+                .map(ApiResponse::success);
     }
 
-    @GetMapping
     @PatchMapping
     public Mono<ApiResponse<UserResponse>> updateProfile(@RequestBody UpdateUserRequest request) {
         return getCurrentUserId()
@@ -71,35 +80,22 @@ public class UserController {
                 .map(ApiResponse::success);
     }
 
-    public Mono<ApiResponse<UserResponse>> getProfile() {
-        return getCurrentUserId()
-                .flatMap(userRepository::findById)
-                .switchIfEmpty(Mono.error(new IdentityException("User not found", "USER_NOT_FOUND", HttpStatus.NOT_FOUND)))
-                .map(UserMapper::toResponse)
-                .map(ApiResponse::success);
-    }
-
     @GetMapping("/sessions")
-    public Mono<ApiResponse<java.util.List<Session>>> getSessions() {
+    public Mono<ApiResponse<java.util.List<SessionResponse>>> getSessions() {
         return getCurrentUserId()
                 .flatMapMany(userId -> sessionRepository.findByUserIdAndStatus(userId, "ACTIVE"))
+                .map(SessionMapper::toResponse)
                 .collectList()
                 .map(ApiResponse::success);
     }
 
     @DeleteMapping("/sessions/{sessionId}")
     public Mono<ApiResponse<Void>> revokeSession(@PathVariable UUID sessionId, ServerWebExchange exchange) {
-        // Not a full implementation since we typically want to revoke family and notify via Kafka.
-        // For brevity we just set status to revoked and save it here (or call a service method).
         return getCurrentUserId()
                 .flatMap(userId -> sessionRepository.findById(sessionId)
                         .filter(s -> s.getUserId().equals(userId))
                         .switchIfEmpty(Mono.error(new IdentityException("Session not found or forbidden", "SESSION_NOT_FOUND", HttpStatus.NOT_FOUND)))
-                        .flatMap(s -> {
-                            s.setStatus("REVOKED");
-                            s.setNotNew();
-                            return sessionRepository.save(s);
-                        }))
+                        .flatMap(s -> authService.revokeSessionExplicitly(s.getId(), getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange))))
                 .thenReturn(ApiResponse.success(null, "Session revoked."));
     }
 
@@ -110,5 +106,3 @@ public class UserController {
                 .thenReturn(ApiResponse.success(null, "All sessions revoked."));
     }
 }
-// patch complete
-// patch User Controller

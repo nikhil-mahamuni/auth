@@ -21,4 +21,7 @@ public class TokenProperties {
     private Duration emailVerificationTokenTtl;
     @NotNull
     private Duration passwordResetTokenTtl;
+
+    private boolean devExposeVerificationToken = false;
+    private boolean devExposePasswordResetToken = false;
 }

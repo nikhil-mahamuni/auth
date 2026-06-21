@@ -67,7 +67,9 @@ public class TokenServices {
                             .flatMap(saved -> auditService.logAndPublishEvent(
                                     "EMAIL_VERIFICATION_REQUESTED",
                                     user.getId(), user.getId(), null, null, ipAddress, userAgent, correlationId, requestId,
-                                    Map.of("email", email) // Fix raw token leakage
+                                    Map.of("email", email)
+                                    // In a real environment, the notification service consumes this event and triggers an email
+                                    // Raw tokens are intentionally NOT passed in Kafka events. They should be delivered via secure localized integrations or outbox email templates.
                             ));
                 }).then();
     }
@@ -117,7 +119,8 @@ public class TokenServices {
                             .flatMap(saved -> auditService.logAndPublishEvent(
                                     "PASSWORD_RESET_REQUESTED",
                                     user.getId(), user.getId(), null, null, ipAddress, userAgent, correlationId, requestId,
-                                    Map.of("email", email) // Fix raw token leakage
+                                    Map.of("email", email)
+                                    // Raw token intentionally suppressed
                             ));
                 }).then();
     }

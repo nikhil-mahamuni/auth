@@ -5,6 +5,7 @@ import com.quberratrix.identity.clients.Client;
 import com.quberratrix.identity.clients.ClientRepository;
 import com.quberratrix.identity.common.IdentityException;
 import com.quberratrix.identity.config.properties.AuthProperties;
+import com.quberratrix.identity.config.properties.TokenProperties;
 import com.quberratrix.identity.jwks.JwtService;
 import com.quberratrix.identity.roles.Role;
 import com.quberratrix.identity.roles.RoleRepository;
@@ -54,6 +55,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final AuditService auditService;
     private final AuthProperties authProperties;
+    private final TokenProperties tokenProperties;
     private final TokenServices tokenServices;
 
     private Mono<String> encodePassword(String rawPassword) {
@@ -240,12 +242,13 @@ public class AuthService {
                         .flatMap(roles -> {
                             List<String> roleNames = roles.stream().map(Role::getName).toList();
                             String accessToken = jwtService.generateAccessToken(
-                                    user.getId(), user.getEmail(), user.getUserType(), roleNames, client.getId(), session.getId()
+                                    user.getId(), user.getEmail(), user.getUserType(), roleNames, client.getId(), session.getId(), client.getAccessTokenTtlSeconds() != null ? Long.valueOf(client.getAccessTokenTtlSeconds()) : null
                             );
 
                             String rawRefreshToken = generateOpaqueToken();
                             String hashedRefreshToken = sha256(rawRefreshToken);
-                            long refreshTokenTtl = client.getRefreshTokenTtlSeconds() != null ? client.getRefreshTokenTtlSeconds() : 2592000L;
+                            long refreshTokenTtl = client.getRefreshTokenTtlSeconds() != null ? client.getRefreshTokenTtlSeconds() : tokenProperties.getRefreshTokenTtl().getSeconds();
+                            long ttl = client.getAccessTokenTtlSeconds() != null ? client.getAccessTokenTtlSeconds() : tokenProperties.getAccessTokenTtl().getSeconds();
 
                             RefreshToken refreshToken = new RefreshToken();
                             refreshToken.setId(UUID.randomUUID());
@@ -260,7 +263,7 @@ public class AuthService {
 
                             return refreshTokenRepository.save(refreshToken)
                                     .flatMap(rt -> {
-                                        AuthResponse authResponse = new AuthResponse(accessToken, "JWT", 900L);
+                                        AuthResponse authResponse = new AuthResponse(accessToken, "Bearer", ttl);
                                         return auditService.logAndPublishEvent("TOKEN_REFRESHED", user.getId(), user.getId(), client.getId(), session.getId(), ipAddress, userAgent, correlationId, requestId, Map.of())
                                                 .thenReturn(new LoginResult(authResponse, rawRefreshToken, refreshTokenTtl));
                                     });
@@ -359,7 +362,8 @@ public class AuthService {
         session.setCreatedAt(Instant.now());
         session.setLastUsedAt(Instant.now());
 
-        long refreshTokenTtl = client.getRefreshTokenTtlSeconds() != null ? client.getRefreshTokenTtlSeconds() : 2592000L;
+        long refreshTokenTtl = client.getRefreshTokenTtlSeconds() != null ? client.getRefreshTokenTtlSeconds() : tokenProperties.getRefreshTokenTtl().getSeconds();
+                            long ttl = client.getAccessTokenTtlSeconds() != null ? client.getAccessTokenTtlSeconds() : tokenProperties.getAccessTokenTtl().getSeconds();
         session.setExpiresAt(Instant.now().plusSeconds(refreshTokenTtl));
 
         return sessionRepository.save(session)
@@ -367,7 +371,7 @@ public class AuthService {
                         .flatMap(roles -> {
                             List<String> roleNames = roles.stream().map(Role::getName).toList();
                             String accessToken = jwtService.generateAccessToken(
-                                    user.getId(), user.getEmail(), user.getUserType(), roleNames, client.getId(), savedSession.getId()
+                                    user.getId(), user.getEmail(), user.getUserType(), roleNames, client.getId(), savedSession.getId(), client.getAccessTokenTtlSeconds() != null ? Long.valueOf(client.getAccessTokenTtlSeconds()) : null
                             );
 
                             String rawRefreshToken = generateOpaqueToken();
@@ -386,7 +390,7 @@ public class AuthService {
 
                             return refreshTokenRepository.save(refreshToken)
                                     .flatMap(rt -> {
-                                        AuthResponse authResponse = new AuthResponse(accessToken, "JWT", 900L);
+                                        AuthResponse authResponse = new AuthResponse(accessToken, "Bearer", ttl);
                                         return auditService.logAndPublishEvent("USER_LOGIN", user.getId(), user.getId(), client.getId(), savedSession.getId(), ipAddress, userAgent, correlationId, requestId, Map.of())
                                                 .thenReturn(new LoginResult(authResponse, rawRefreshToken, refreshTokenTtl));
                                     });
@@ -400,5 +404,20 @@ public class AuthService {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
+    @Transactional
+    public Mono<Void> revokeSessionExplicitly(UUID sessionId, String ipAddress, String userAgent, String correlationId, String requestId) {
+        return sessionRepository.findById(sessionId)
+                .flatMap(session -> {
+                    session.setStatus("REVOKED");
+                    session.setRevokedAt(Instant.now());
+                    session.setNotNew();
+                    return sessionRepository.save(session)
+                            .flatMap(s -> revokeFamily(s.getRefreshTokenFamilyId(), s.getId(), "user_revoked_session"));
+                })
+                .then(auditService.logAndPublishEvent("SESSION_REVOKED", null, null, null, sessionId, ipAddress, userAgent, correlationId, requestId, Map.of()))
+                .then();
+    }
+
     public record LoginResult(AuthResponse response, String rawRefreshToken, long maxAge) {}
 }
+// patching authService for missing revoke method

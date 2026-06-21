@@ -16,4 +16,8 @@ public interface UserRoleRepository extends ReactiveCrudRepository<UserRole, UUI
     @Modifying
     @Query("DELETE FROM identity_user_roles WHERE user_id = :userId")
     Mono<Void> deleteRolesByUserId(UUID userId);
+
+    @Modifying
+    @Query("DELETE FROM identity_user_roles WHERE user_id = :userId AND role_id = :roleId")
+    Mono<Void> deleteRoleByUserIdAndRoleId(UUID userId, UUID roleId);
 }

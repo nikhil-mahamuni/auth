@@ -81,8 +81,13 @@ public class AuthController {
             ServerWebExchange exchange) {
 
         String tokenToUse = refreshTokenCookie;
-        String clientId = request != null ? request.clientId() : null;
+        if (tokenToUse == null || tokenToUse.isBlank()) {
+            if (request != null && request.refreshToken() != null && !request.refreshToken().isBlank()) {
+                tokenToUse = request.refreshToken();
+            }
+        }
 
+        String clientId = request != null ? request.clientId() : null;
         String deviceId = exchange.getRequest().getHeaders().getFirst("X-Device-Id");
         String deviceName = exchange.getRequest().getHeaders().getFirst("X-Device-Name");
         String deviceType = exchange.getRequest().getHeaders().getFirst("X-Device-Type");

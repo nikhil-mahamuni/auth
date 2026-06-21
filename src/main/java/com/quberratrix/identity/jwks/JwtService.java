@@ -104,8 +104,9 @@ public class JwtService {
         }
     }
 
-    public String generateAccessToken(UUID userId, String email, String userType, java.util.List<String> roles, UUID clientId, UUID sessionId) {
+    public String generateAccessToken(UUID userId, String email, String userType, java.util.List<String> roles, UUID clientId, UUID sessionId, Long clientTtlSeconds) {
         Instant now = Instant.now();
+        long ttl = clientTtlSeconds != null ? clientTtlSeconds : tokenProperties.getAccessTokenTtl().getSeconds();
         return Jwts.builder()
                 .header().keyId(keyId).and()
                 .issuer(jwtProperties.getIssuer())
@@ -113,15 +114,36 @@ public class JwtService {
                 .audience().add(jwtProperties.getAudience()).and()
                 .id(UUID.randomUUID().toString()) // jti
                 .issuedAt(Date.from(now)) // iat
-                .expiration(Date.from(now.plusSeconds(tokenProperties.getAccessTokenTtl().getSeconds()))) // exp
+                .expiration(Date.from(now.plusSeconds(ttl))) // exp
                 .claims(Map.of(
                         "email", email != null ? email : "",
                         "user_type", userType != null ? userType : "",
                         "roles", roles,
                         "client_id", clientId.toString(),
                         "sid", sessionId != null ? sessionId.toString() : "",
-                        "typ", "JWT", // Required typ
+                        "typ", "JWT",
                         "token_use", "access"
+                ))
+                .signWith(privateKey, Jwts.SIG.RS256)
+                .compact();
+    }
+
+    public String generateServiceToken(UUID clientId, java.util.List<String> roles, Long clientTtlSeconds) {
+        Instant now = Instant.now();
+        long ttl = clientTtlSeconds != null ? clientTtlSeconds : tokenProperties.getAccessTokenTtl().getSeconds();
+        return Jwts.builder()
+                .header().keyId(keyId).and()
+                .issuer(jwtProperties.getIssuer())
+                .subject(clientId.toString())
+                .audience().add(jwtProperties.getAudience()).and()
+                .id(UUID.randomUUID().toString()) // jti
+                .issuedAt(Date.from(now)) // iat
+                .expiration(Date.from(now.plusSeconds(ttl))) // exp
+                .claims(Map.of(
+                        "roles", roles,
+                        "client_id", clientId.toString(),
+                        "typ", "JWT",
+                        "token_use", "service"
                 ))
                 .signWith(privateKey, Jwts.SIG.RS256)
                 .compact();
@@ -137,7 +159,8 @@ public class JwtService {
                     .parseSignedClaims(token)
                     .getPayload();
 
-            if (!"access".equals(claims.get("token_use"))) {
+            String use = claims.get("token_use", String.class);
+            if (!"access".equals(use) && !"service".equals(use)) {
                 throw new IdentityException("Invalid token use", "INVALID_TOKEN", HttpStatus.UNAUTHORIZED);
             }
             if (!"JWT".equals(claims.get("typ"))) {
