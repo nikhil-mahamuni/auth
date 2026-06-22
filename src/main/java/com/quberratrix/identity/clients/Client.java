@@ -19,7 +19,7 @@ public class Client extends PersistableEntity {
     private String clientName;
     private String clientType;
     private String clientSecretHash;
-    private boolean enabled;
+    private String status;
     private String allowedRedirectUrls;
     private String allowedWebOrigins;
     private String tokenEndpointAuthMethod;

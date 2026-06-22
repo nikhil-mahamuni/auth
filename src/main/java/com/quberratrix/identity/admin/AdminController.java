@@ -234,7 +234,7 @@ public class AdminController {
                         c.setClientName(request.clientName());
                         c.setClientType(request.clientType());
                         c.setClientSecretHash(secretHash.isEmpty() ? null : secretHash);
-                        c.setEnabled(true);
+                        c.setStatus("ACTIVE");
                         c.setAllowedRedirectUrls(request.allowedRedirectUrls());
                         c.setAllowedWebOrigins(request.allowedWebOrigins());
                         c.setAccessTokenTtlSeconds(request.accessTokenTtlSeconds());
@@ -256,7 +256,7 @@ public class AdminController {
     public Mono<ApiResponse<Void>> enableClient(@PathVariable UUID id, ServerWebExchange exchange) {
         return getActorId().flatMap(actorId -> clientRepository.findById(id)
                 .flatMap(c -> {
-                    c.setEnabled(true);
+                    c.setStatus("ACTIVE");
                     c.setNotNew();
                     return clientRepository.save(c)
                             .flatMap(s -> auditService.logAndPublishEvent("CLIENT_ENABLED", actorId, null, c.getId(), null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of()));
@@ -267,7 +267,7 @@ public class AdminController {
     public Mono<ApiResponse<Void>> disableClient(@PathVariable UUID id, ServerWebExchange exchange) {
         return getActorId().flatMap(actorId -> clientRepository.findById(id)
                 .flatMap(c -> {
-                    c.setEnabled(false);
+                    c.setStatus("DISABLED");
                     c.setNotNew();
                     return clientRepository.save(c)
                             .flatMap(s -> auditService.logAndPublishEvent("CLIENT_DISABLED", actorId, null, c.getId(), null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of()));

@@ -111,7 +111,7 @@ public class AuthService {
         return clientRepository.findByClientId(request.clientId() != null ? request.clientId() : "dev-client")
                 .switchIfEmpty(Mono.error(new IdentityException("Invalid client", "INVALID_CLIENT", HttpStatus.BAD_REQUEST)))
                 .flatMap(client -> {
-                    if (!client.isEnabled() || "SERVICE".equals(client.getClientType())) {
+                    if (!"ACTIVE".equals(client.getStatus()) || "SERVICE".equals(client.getClientType())) {
                         return Mono.error(new IdentityException("Client is invalid or disabled", "CLIENT_DISABLED", HttpStatus.FORBIDDEN));
                     }
                     return userRepository.findByEmail(request.email())
@@ -217,7 +217,7 @@ public class AuthService {
                     return clientRepository.findById(refreshToken.getClientId())
                             .flatMap(client -> userRepository.findById(refreshToken.getUserId())
                                     .flatMap(user -> {
-                                         if ("DISABLED".equals(user.getStatus()) || "DELETED".equals(user.getStatus()) || "LOCKED".equals(user.getStatus()) || (user.getLockedUntil() != null && user.getLockedUntil().isAfter(Instant.now())) || !client.isEnabled()) {
+                                         if ("DISABLED".equals(user.getStatus()) || "DELETED".equals(user.getStatus()) || "LOCKED".equals(user.getStatus()) || (user.getLockedUntil() != null && user.getLockedUntil().isAfter(Instant.now())) || !"ACTIVE".equals(client.getStatus())) {
                                               return Mono.error(new IdentityException("Account locked or client disabled", "ACCOUNT_LOCKED", HttpStatus.FORBIDDEN));
                                          }
 

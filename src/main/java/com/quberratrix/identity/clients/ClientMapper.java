@@ -8,7 +8,7 @@ public class ClientMapper {
                 client.getClientId(),
                 client.getClientName(),
                 client.getClientType(),
-                client.isEnabled(),
+                client.getStatus(),
                 client.getAllowedRedirectUrls(),
                 client.getAllowedWebOrigins(),
                 client.getTokenEndpointAuthMethod(),

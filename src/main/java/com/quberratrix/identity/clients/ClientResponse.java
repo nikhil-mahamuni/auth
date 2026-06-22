@@ -8,7 +8,7 @@ public record ClientResponse(
         String clientId,
         String clientName,
         String clientType,
-        boolean enabled,
+        String status,
         String allowedRedirectUrls,
         String allowedWebOrigins,
         String tokenEndpointAuthMethod,

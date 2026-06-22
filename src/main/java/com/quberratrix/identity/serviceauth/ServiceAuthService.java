@@ -37,7 +37,7 @@ public class ServiceAuthService {
         return clientRepository.findByClientId(request.clientId())
                 .switchIfEmpty(Mono.error(new IdentityException("Invalid client", "INVALID_CLIENT", HttpStatus.BAD_REQUEST)))
                 .flatMap(client -> {
-                    if (!"CONFIDENTIAL".equals(client.getClientType()) && !"SERVICE".equals(client.getClientType()) || client.getClientSecretHash() == null || !client.isEnabled()) {
+                    if (!"CONFIDENTIAL".equals(client.getClientType()) && !"SERVICE".equals(client.getClientType()) || client.getClientSecretHash() == null || !"ACTIVE".equals(client.getStatus())) {
                         return Mono.error(new IdentityException("Invalid client type or disabled", "INVALID_CLIENT", HttpStatus.BAD_REQUEST));
                     }
                     return matchesPassword(request.clientSecret(), client.getClientSecretHash())
