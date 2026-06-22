@@ -52,17 +52,13 @@ public class IdentityEventPublisher {
                     outbox.setEventType(eventType);
                     outbox.setEventVersion("v1");
                     outbox.setPayload(json);
-                    outbox.setHeaders("{}"); // Minimal headers
+                    outbox.setHeaders("{}");
                     outbox.setStatus("PENDING");
                     outbox.setRetryCount(0);
                     outbox.setCreatedAt(Instant.now());
 
                     return outboxRepository.save(outbox);
                 })
-                .onErrorResume(e -> {
-                    log.error("Serialization or Outbox insert failed for event: " + eventType, e);
-                    return Mono.empty();
-                })
-                .then();
+                .then(); // Removed the .onErrorResume empty fallback to fail fast natively on the current chain transaction
     }
 }

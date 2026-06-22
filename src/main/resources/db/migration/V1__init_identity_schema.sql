@@ -1,4 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS citext;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE identity_users (
     id UUID PRIMARY KEY,
@@ -17,8 +18,8 @@ CREATE TABLE identity_users (
     password_updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT valid_user_status CHECK (status IN ('ACTIVE', 'DISABLED', 'LOCKED')),
-    CONSTRAINT valid_user_type CHECK (user_type IN ('PUBLIC_USER', 'ADMIN'))
+    CONSTRAINT valid_user_status CHECK (status IN ('ACTIVE', 'PENDING_VERIFICATION', 'DISABLED', 'LOCKED', 'DELETED')),
+    CONSTRAINT valid_user_type CHECK (user_type IN ('PUBLIC_USER', 'COMPANY_USER', 'ADMIN', 'SERVICE_ACCOUNT'))
 );
 CREATE INDEX idx_users_email ON identity_users(email);
 CREATE INDEX idx_users_status ON identity_users(status);
@@ -36,7 +37,8 @@ CREATE TABLE identity_login_attempts (
     request_id VARCHAR(100),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX idx_login_attempts_email ON identity_login_attempts(email);
+CREATE INDEX idx_login_attempts_email_time ON identity_login_attempts(email, created_at);
+CREATE INDEX idx_login_attempts_ip_time ON identity_login_attempts(ip_address, created_at);
 
 CREATE TABLE identity_roles (
     id UUID PRIMARY KEY,
@@ -57,8 +59,8 @@ CREATE TABLE identity_clients (
     client_id VARCHAR(100) NOT NULL UNIQUE,
     client_name VARCHAR(100) NOT NULL,
     client_type VARCHAR(50) NOT NULL DEFAULT 'PUBLIC',
+    status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
     client_secret_hash VARCHAR(255),
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,
     allowed_redirect_urls TEXT,
     allowed_web_origins TEXT,
     token_endpoint_auth_method VARCHAR(50) DEFAULT 'none',
@@ -66,7 +68,15 @@ CREATE TABLE identity_clients (
     refresh_token_ttl_seconds INTEGER,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT valid_client_type CHECK (client_type IN ('PUBLIC', 'CONFIDENTIAL', 'SERVICE'))
+    CONSTRAINT valid_client_type CHECK (client_type IN ('PUBLIC', 'CONFIDENTIAL', 'SERVICE')),
+    CONSTRAINT valid_client_status CHECK (status IN ('ACTIVE', 'DISABLED', 'DELETED'))
+);
+
+CREATE TABLE identity_client_scopes (
+    id UUID PRIMARY KEY,
+    client_id UUID NOT NULL REFERENCES identity_clients(id) ON DELETE CASCADE,
+    scope VARCHAR(100) NOT NULL,
+    UNIQUE(client_id, scope)
 );
 
 CREATE TABLE identity_sessions (
@@ -87,7 +97,8 @@ CREATE TABLE identity_sessions (
     revoked_at TIMESTAMP WITH TIME ZONE,
     CONSTRAINT valid_session_status CHECK (status IN ('ACTIVE', 'REVOKED', 'EXPIRED'))
 );
-CREATE INDEX idx_sessions_user_id ON identity_sessions(user_id);
+CREATE INDEX idx_sessions_user_status ON identity_sessions(user_id, status);
+CREATE INDEX idx_sessions_client_status ON identity_sessions(client_id, status);
 CREATE INDEX idx_sessions_family_id ON identity_sessions(refresh_token_family_id);
 
 CREATE TABLE identity_refresh_tokens (
@@ -105,9 +116,10 @@ CREATE TABLE identity_refresh_tokens (
     revoked_at TIMESTAMP WITH TIME ZONE,
     revoked_by VARCHAR(255),
     revoke_reason VARCHAR(255),
-    CONSTRAINT valid_token_status CHECK (status IN ('ACTIVE', 'ROTATED', 'REVOKED', 'REUSED'))
+    CONSTRAINT valid_token_status CHECK (status IN ('ACTIVE', 'ROTATED', 'REVOKED', 'EXPIRED', 'REUSED'))
 );
 CREATE INDEX idx_refresh_tokens_family_id ON identity_refresh_tokens(family_id);
+CREATE INDEX idx_refresh_tokens_expiry ON identity_refresh_tokens(expires_at);
 
 CREATE TABLE identity_email_verification_tokens (
     id UUID PRIMARY KEY,
@@ -115,7 +127,8 @@ CREATE TABLE identity_email_verification_tokens (
     user_id UUID NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
     issued_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    used BOOLEAN NOT NULL DEFAULT FALSE
+    status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
+    CONSTRAINT valid_evt_status CHECK (status IN ('ACTIVE', 'USED', 'EXPIRED', 'REVOKED'))
 );
 
 CREATE TABLE identity_password_reset_tokens (
@@ -124,7 +137,8 @@ CREATE TABLE identity_password_reset_tokens (
     user_id UUID NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
     issued_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    used BOOLEAN NOT NULL DEFAULT FALSE
+    status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
+    CONSTRAINT valid_prt_status CHECK (status IN ('ACTIVE', 'USED', 'EXPIRED', 'REVOKED'))
 );
 
 CREATE TABLE identity_revoked_access_tokens (
@@ -150,43 +164,97 @@ CREATE TABLE identity_audit_events (
     metadata TEXT,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX idx_audit_actor_time ON identity_audit_events(actor_id, created_at);
+CREATE INDEX idx_audit_target_time ON identity_audit_events(target_id, created_at);
+CREATE INDEX idx_audit_type_time ON identity_audit_events(event_type, created_at);
 
-CREATE TABLE identity_providers (
+CREATE TABLE identity_event_outbox (
     id UUID PRIMARY KEY,
-    provider_id VARCHAR(50) NOT NULL UNIQUE,
-    provider_name VARCHAR(100) NOT NULL,
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE identity_user_providers (
-    id UUID PRIMARY KEY,
-    user_id UUID NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
-    provider_id UUID NOT NULL REFERENCES identity_providers(id) ON DELETE CASCADE,
-    provider_user_id VARCHAR(255) NOT NULL,
+    aggregate_type VARCHAR(100) NOT NULL,
+    aggregate_id UUID,
+    event_type VARCHAR(100) NOT NULL,
+    event_version VARCHAR(20) NOT NULL DEFAULT 'v1',
+    payload TEXT,
+    headers TEXT,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    next_retry_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(provider_id, provider_user_id)
+    published_at TIMESTAMP WITH TIME ZONE,
+    error_message TEXT,
+    CONSTRAINT valid_outbox_status CHECK (status IN ('PENDING', 'PROCESSING', 'PUBLISHED', 'FAILED', 'DEAD'))
 );
+CREATE INDEX idx_outbox_status_retry ON identity_event_outbox(status, next_retry_at);
 
 CREATE TABLE identity_key_pairs (
     id UUID PRIMARY KEY,
     kid VARCHAR(100) NOT NULL UNIQUE,
     public_key TEXT NOT NULL,
-    private_key TEXT,
+    algorithm VARCHAR(50) NOT NULL DEFAULT 'RS256',
     status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     rotated_at TIMESTAMP WITH TIME ZONE,
     CONSTRAINT valid_key_status CHECK (status IN ('ACTIVE', 'RETIRED', 'REVOKED'))
 );
 
--- Insert default roles
+CREATE TABLE identity_organizations (
+    id UUID PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) NOT NULL UNIQUE,
+    status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT valid_org_status CHECK (status IN ('ACTIVE', 'DISABLED', 'DELETED'))
+);
+
+CREATE TABLE identity_organization_members (
+    id UUID PRIMARY KEY,
+    organization_id UUID NOT NULL REFERENCES identity_organizations(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
+    role VARCHAR(50) NOT NULL DEFAULT 'MEMBER',
+    status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
+    joined_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(organization_id, user_id),
+    CONSTRAINT valid_member_status CHECK (status IN ('ACTIVE', 'INVITED', 'DISABLED', 'REMOVED')),
+    CONSTRAINT valid_member_role CHECK (role IN ('OWNER', 'ADMIN', 'MEMBER'))
+);
+CREATE INDEX idx_org_members_user ON identity_organization_members(user_id, status);
+CREATE INDEX idx_org_members_org ON identity_organization_members(organization_id, status);
+
+CREATE TABLE identity_provider_configs (
+    id UUID PRIMARY KEY,
+    provider_key VARCHAR(50) NOT NULL UNIQUE,
+    provider_name VARCHAR(100) NOT NULL,
+    provider_type VARCHAR(50) NOT NULL,
+    issuer_uri TEXT,
+    authorization_uri TEXT,
+    token_uri TEXT,
+    user_info_uri TEXT,
+    jwks_uri TEXT,
+    scopes TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE identity_provider_links (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
+    provider_id UUID NOT NULL REFERENCES identity_provider_configs(id) ON DELETE CASCADE,
+    provider_user_id VARCHAR(255) NOT NULL,
+    provider_email CITEXT,
+    provider_username VARCHAR(255),
+    linked_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_login_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE(provider_id, provider_user_id),
+    UNIQUE(provider_id, user_id)
+);
+CREATE INDEX idx_provider_links ON identity_provider_links(provider_id, provider_user_id);
+
+-- Insert default safe seed data
 INSERT INTO identity_roles (id, name, description) VALUES (gen_random_uuid(), 'ROLE_USER', 'Standard User');
 INSERT INTO identity_roles (id, name, description) VALUES (gen_random_uuid(), 'ROLE_ADMIN', 'Administrator');
 INSERT INTO identity_roles (id, name, description) VALUES (gen_random_uuid(), 'ROLE_SERVICE', 'Service Account');
 
--- Insert default client for local dev
-INSERT INTO identity_clients (id, client_id, client_name, client_type, enabled, token_endpoint_auth_method)
-VALUES (gen_random_uuid(), 'dev-client', 'Development Client', 'PUBLIC', true, 'none');
-
-INSERT INTO identity_clients (id, client_id, client_name, client_type, client_secret_hash, enabled, token_endpoint_auth_method)
-VALUES (gen_random_uuid(), 'service-client', 'Service Client', 'SERVICE', '$2a$12$R.3e.z82t.n61.B1K8R7ZebE.P9iC6V9l1aX1T2/vP8jR3m9rX52m', true, 'client_secret_post'); -- Secret: service-secret
+INSERT INTO identity_clients (id, client_id, client_name, client_type, status, token_endpoint_auth_method)
+VALUES (gen_random_uuid(), 'dev-client', 'Development Client', 'PUBLIC', 'ACTIVE', 'none');

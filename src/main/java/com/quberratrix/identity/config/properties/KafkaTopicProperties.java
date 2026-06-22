@@ -8,7 +8,7 @@ import org.springframework.validation.annotation.Validated;
 @Data
 @Validated
 @Configuration
-@ConfigurationProperties(prefix = "kafka.topics")
+@ConfigurationProperties(prefix = "identity.kafka.topics")
 public class KafkaTopicProperties {
     private String userRegistered = "identity-user-registered";
     private String userVerified = "identity-user-verified";

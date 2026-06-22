@@ -5,6 +5,7 @@ import com.quberratrix.identity.common.IdentityException;
 import com.quberratrix.identity.config.properties.TokenProperties;
 import com.quberratrix.identity.users.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -18,6 +19,7 @@ import java.util.Base64;
 import java.util.Map;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TokenServices {
@@ -61,15 +63,17 @@ public class TokenServices {
                     token.setUserId(user.getId());
                     token.setIssuedAt(Instant.now());
                     token.setExpiresAt(Instant.now().plusSeconds(tokenProperties.getEmailVerificationTokenTtl().getSeconds()));
-                    token.setUsed(false);
+                    token.setStatus("ACTIVE");
+
+                    if (tokenProperties.isDevExposeVerificationToken()) {
+                        log.info("DEV MODE - Verification Token for {}: {}", email, rawToken);
+                    }
 
                     return emailVerificationTokenRepository.save(token)
                             .flatMap(saved -> auditService.logAndPublishEvent(
                                     "EMAIL_VERIFICATION_REQUESTED",
                                     user.getId(), user.getId(), null, null, ipAddress, userAgent, correlationId, requestId,
                                     Map.of("email", email)
-                                    // In a real environment, the notification service consumes this event and triggers an email
-                                    // Raw tokens are intentionally NOT passed in Kafka events. They should be delivered via secure localized integrations or outbox email templates.
                             ));
                 }).then();
     }
@@ -80,16 +84,17 @@ public class TokenServices {
         return emailVerificationTokenRepository.findByTokenHash(hashedToken)
                 .switchIfEmpty(Mono.error(new IdentityException("Invalid token", "INVALID_TOKEN", HttpStatus.BAD_REQUEST)))
                 .flatMap(token -> {
-                    if (token.isUsed() || token.getExpiresAt().isBefore(Instant.now())) {
+                    if (!"ACTIVE".equals(token.getStatus()) || token.getExpiresAt().isBefore(Instant.now())) {
                         return Mono.error(new IdentityException("Token expired or already used", "TOKEN_EXPIRED", HttpStatus.BAD_REQUEST));
                     }
 
-                    token.setUsed(true);
+                    token.setStatus("USED");
                     token.setNotNew();
                     return emailVerificationTokenRepository.save(token)
                             .then(userRepository.findById(token.getUserId()))
                             .flatMap(user -> {
                                 user.setEmailVerified(true);
+                                user.setStatus("ACTIVE"); // if they were PENDING_VERIFICATION
                                 user.setNotNew();
                                 return userRepository.save(user);
                             })
@@ -113,14 +118,17 @@ public class TokenServices {
                     token.setUserId(user.getId());
                     token.setIssuedAt(Instant.now());
                     token.setExpiresAt(Instant.now().plusSeconds(tokenProperties.getPasswordResetTokenTtl().getSeconds()));
-                    token.setUsed(false);
+                    token.setStatus("ACTIVE");
+
+                    if (tokenProperties.isDevExposePasswordResetToken()) {
+                        log.info("DEV MODE - Password Reset Token for {}: {}", email, rawToken);
+                    }
 
                     return passwordResetTokenRepository.save(token)
                             .flatMap(saved -> auditService.logAndPublishEvent(
                                     "PASSWORD_RESET_REQUESTED",
                                     user.getId(), user.getId(), null, null, ipAddress, userAgent, correlationId, requestId,
                                     Map.of("email", email)
-                                    // Raw token intentionally suppressed
                             ));
                 }).then();
     }
@@ -131,11 +139,11 @@ public class TokenServices {
         return passwordResetTokenRepository.findByTokenHash(hashedToken)
                 .switchIfEmpty(Mono.error(new IdentityException("Invalid token", "INVALID_TOKEN", HttpStatus.BAD_REQUEST)))
                 .flatMap(token -> {
-                    if (token.isUsed() || token.getExpiresAt().isBefore(Instant.now())) {
+                    if (!"ACTIVE".equals(token.getStatus()) || token.getExpiresAt().isBefore(Instant.now())) {
                         return Mono.error(new IdentityException("Token expired or already used", "TOKEN_EXPIRED", HttpStatus.BAD_REQUEST));
                     }
 
-                    token.setUsed(true);
+                    token.setStatus("USED");
                     token.setNotNew();
                     return passwordResetTokenRepository.save(token)
                             .then(userRepository.findById(token.getUserId()))

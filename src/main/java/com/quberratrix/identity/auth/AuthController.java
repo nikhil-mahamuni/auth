@@ -8,6 +8,7 @@ import com.quberratrix.identity.tokens.TokenServices;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
+import com.quberratrix.identity.config.properties.CookieProperties;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
@@ -25,6 +26,7 @@ public class AuthController {
     private final AuthService authService;
     private final TokenServices tokenServices;
     private final ServiceAuthService serviceAuthService;
+    private final CookieProperties cookieProperties;
 
     private String getIp(ServerWebExchange exchange) {
         return exchange.getRequest().getRemoteAddress() != null ? exchange.getRequest().getRemoteAddress().getAddress().getHostAddress() : "unknown";
@@ -61,11 +63,12 @@ public class AuthController {
         return authService.login(request, getIp(exchange), getUa(exchange), deviceId, deviceName, deviceType, location, getCorrelationId(exchange), getRequestId(exchange))
                 .map(result -> {
                     ResponseCookie cookie = ResponseCookie.from("refresh_token", result.rawRefreshToken())
-                            .httpOnly(true)
-                            .secure(true)
-                            .path("/api/v1/auth/refresh")
-                            .maxAge(result.maxAge())
-                            .sameSite("Strict")
+                            .httpOnly(cookieProperties.isHttpOnly())
+                            .secure(cookieProperties.isSecure())
+                            .path(cookieProperties.getPath())
+                            .domain(cookieProperties.getDomain())
+                            .maxAge(cookieProperties.getMaxAge() != null ? cookieProperties.getMaxAge() : result.maxAge())
+                            .sameSite(cookieProperties.getSameSite())
                             .build();
 
                     return ResponseEntity.ok()
@@ -96,11 +99,12 @@ public class AuthController {
         return authService.refreshWithSha256(tokenToUse, clientId, getIp(exchange), getUa(exchange), deviceId, deviceName, deviceType, location, getCorrelationId(exchange), getRequestId(exchange))
                 .map(result -> {
                     ResponseCookie cookie = ResponseCookie.from("refresh_token", result.rawRefreshToken())
-                            .httpOnly(true)
-                            .secure(true)
-                            .path("/api/v1/auth/refresh")
-                            .maxAge(result.maxAge())
-                            .sameSite("Strict")
+                            .httpOnly(cookieProperties.isHttpOnly())
+                            .secure(cookieProperties.isSecure())
+                            .path(cookieProperties.getPath())
+                            .domain(cookieProperties.getDomain())
+                            .maxAge(cookieProperties.getMaxAge() != null ? cookieProperties.getMaxAge() : result.maxAge())
+                            .sameSite(cookieProperties.getSameSite())
                             .build();
 
                     return ResponseEntity.ok()
@@ -123,11 +127,12 @@ public class AuthController {
         return authService.logout(refreshTokenCookie, accessToken, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange))
                 .then(Mono.defer(() -> {
                     ResponseCookie cookie = ResponseCookie.from("refresh_token", "")
-                            .httpOnly(true)
-                            .secure(true)
-                            .path("/api/v1/auth/refresh")
+                            .httpOnly(cookieProperties.isHttpOnly())
+                            .secure(cookieProperties.isSecure())
+                            .path(cookieProperties.getPath())
+                            .domain(cookieProperties.getDomain())
                             .maxAge(0)
-                            .sameSite("Strict")
+                            .sameSite(cookieProperties.getSameSite())
                             .build();
                     ApiResponse<Void> body = ApiResponse.success(null, "Logged out successfully");
                     return Mono.just(ResponseEntity.ok()

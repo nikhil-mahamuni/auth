@@ -12,7 +12,7 @@ import java.time.Duration;
 @Data
 @Validated
 @Configuration
-@ConfigurationProperties(prefix = "auth")
+@ConfigurationProperties(prefix = "identity.auth")
 public class AuthProperties {
 
     private Login login = new Login();

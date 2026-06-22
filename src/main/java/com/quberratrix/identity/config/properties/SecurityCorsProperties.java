@@ -10,10 +10,10 @@ import java.util.List;
 @Data
 @Validated
 @Configuration
-@ConfigurationProperties(prefix = "security.cors")
+@ConfigurationProperties(prefix = "identity.security.cors")
 public class SecurityCorsProperties {
     private List<String> allowedOrigins = List.of();
     private List<String> allowedMethods = List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS");
-    private List<String> allowedHeaders = List.of("Authorization", "Content-Type", "X-Requested-With", "X-Gateway-Secret", "X-Device-Id", "X-Device-Name", "X-Device-Type", "X-Location", "X-Correlation-Id", "X-Request-Id");
+    private List<String> allowedHeaders = List.of("Authorization", "Content-Type", "X-Requested-With", "X-Gateway-Name", "X-Gateway-Secret", "X-Device-Id", "X-Device-Name", "X-Device-Type", "X-Location", "X-Correlation-Id", "X-Request-Id");
     private boolean allowCredentials = false;
 }

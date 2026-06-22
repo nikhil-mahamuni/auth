@@ -11,7 +11,7 @@ import java.time.Duration;
 @Data
 @Validated
 @Configuration
-@ConfigurationProperties(prefix = "token")
+@ConfigurationProperties(prefix = "identity.token")
 public class TokenProperties {
     @NotNull
     private Duration accessTokenTtl;

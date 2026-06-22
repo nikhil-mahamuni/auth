@@ -7,6 +7,7 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.relational.core.mapping.Table;
 
 import java.time.Instant;
+import com.quberratrix.identity.tokens.TokenStatus;
 import java.util.UUID;
 
 @Data
@@ -19,5 +20,5 @@ public class EmailVerificationToken extends PersistableEntity {
     private UUID userId;
     private Instant issuedAt;
     private Instant expiresAt;
-    private boolean used;
+    private String status;
 }

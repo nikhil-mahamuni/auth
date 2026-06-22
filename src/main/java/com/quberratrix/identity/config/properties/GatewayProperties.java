@@ -10,7 +10,7 @@ import java.util.List;
 @Data
 @Validated
 @Configuration
-@ConfigurationProperties(prefix = "gateway")
+@ConfigurationProperties(prefix = "identity.gateway")
 public class GatewayProperties {
     private boolean enabled = false;
     private String trustedNameHeader;

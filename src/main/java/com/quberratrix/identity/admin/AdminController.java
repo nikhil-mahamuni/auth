@@ -47,6 +47,14 @@ public class AdminController {
     private final AuditService auditService;
     private final PasswordEncoder passwordEncoder;
 
+    private Mono<UUID> getActorId() {
+        return org.springframework.security.core.context.ReactiveSecurityContextHolder.getContext()
+                .map(org.springframework.security.core.context.SecurityContext::getAuthentication)
+                .map(org.springframework.security.core.Authentication::getPrincipal)
+                .map(principal -> UUID.fromString(principal.toString()))
+                .defaultIfEmpty(UUID.randomUUID());
+    }
+
     private String getIp(ServerWebExchange exchange) {
         return exchange.getRequest().getRemoteAddress() != null ? exchange.getRequest().getRemoteAddress().getAddress().getHostAddress() : "unknown";
     }
@@ -65,9 +73,6 @@ public class AdminController {
         return requestId != null ? requestId.toString() : "";
     }
 
-    // A helper method to derive an "actor ID" if we wanted to extract the admin's ID from context.
-    // For brevity, we pass null as actorId here, assuming a full implementation would extract it from ReactiveSecurityContextHolder.
-
     @GetMapping("/users")
     public Flux<UserResponse> listUsers() {
         return userRepository.findAll().map(UserMapper::toResponse);
@@ -83,7 +88,7 @@ public class AdminController {
 
     @PostMapping("/users")
     public Mono<ApiResponse<UserResponse>> createUser(@Valid @RequestBody CreateUserRequest request, ServerWebExchange exchange) {
-        return userRepository.findByEmail(request.email())
+        return getActorId().flatMap(actorId -> userRepository.findByEmail(request.email())
                 .flatMap(existing -> Mono.<User>error(new IdentityException("Email exists", "EMAIL_EXISTS", HttpStatus.CONFLICT)))
                 .switchIfEmpty(Mono.defer(() -> Mono.fromCallable(() -> passwordEncoder.encode(request.password()))
                         .subscribeOn(Schedulers.boundedElastic())
@@ -102,51 +107,51 @@ public class AdminController {
                             u.setPasswordUpdatedAt(Instant.now());
                             return userRepository.save(u);
                         })
-                        .flatMap(user -> auditService.logAndPublishEvent("ADMIN_USER_CREATED", null, user.getId(), null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of("email", user.getEmail()))
+                        .flatMap(user -> auditService.logAndPublishEvent("ADMIN_USER_CREATED", actorId, user.getId(), null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of("email", user.getEmail()))
                             .thenReturn(user))
-                )).map(UserMapper::toResponse).map(ApiResponse::success);
+                )).map(UserMapper::toResponse).map(ApiResponse::success));
     }
 
     @PostMapping("/users/{id}/enable")
     public Mono<ApiResponse<Void>> enableUser(@PathVariable UUID id, ServerWebExchange exchange) {
-        return userRepository.findById(id)
+        return getActorId().flatMap(actorId -> userRepository.findById(id)
                 .switchIfEmpty(Mono.error(new IdentityException("User not found", "USER_NOT_FOUND", HttpStatus.NOT_FOUND)))
                 .flatMap(user -> {
                     user.setStatus("ACTIVE");
                     user.setNotNew();
                     return userRepository.save(user)
-                            .flatMap(u -> auditService.logAndPublishEvent("USER_ENABLED", null, u.getId(), null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of()));
-                }).thenReturn(ApiResponse.success(null, "User enabled."));
+                            .flatMap(u -> auditService.logAndPublishEvent("USER_ENABLED", actorId, u.getId(), null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of()));
+                }).thenReturn(ApiResponse.success((Void) null, "User enabled.")));
     }
 
     @PostMapping("/users/{id}/disable")
     public Mono<ApiResponse<Void>> disableUser(@PathVariable UUID id, ServerWebExchange exchange) {
-        return userRepository.findById(id)
+        return getActorId().flatMap(actorId -> userRepository.findById(id)
                 .switchIfEmpty(Mono.error(new IdentityException("User not found", "USER_NOT_FOUND", HttpStatus.NOT_FOUND)))
                 .flatMap(user -> {
                     user.setStatus("DISABLED");
                     user.setNotNew();
                     return userRepository.save(user)
-                            .flatMap(u -> auditService.logAndPublishEvent("USER_DISABLED", null, u.getId(), null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of()));
-                }).thenReturn(ApiResponse.success(null, "User disabled."));
+                            .flatMap(u -> auditService.logAndPublishEvent("USER_DISABLED", actorId, u.getId(), null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of()));
+                }).thenReturn(ApiResponse.success((Void) null, "User disabled.")));
     }
 
     @PostMapping("/users/{id}/lock")
     public Mono<ApiResponse<Void>> lockUser(@PathVariable UUID id, ServerWebExchange exchange) {
-        return userRepository.findById(id)
+        return getActorId().flatMap(actorId -> userRepository.findById(id)
                 .switchIfEmpty(Mono.error(new IdentityException("User not found", "USER_NOT_FOUND", HttpStatus.NOT_FOUND)))
                 .flatMap(user -> {
                     user.setStatus("LOCKED");
                     user.setNotNew();
                     return userRepository.save(user)
-                            .flatMap(u -> auditService.logAndPublishEvent("USER_LOCKED", null, u.getId(), null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of("reason", "admin_action")));
+                            .flatMap(u -> auditService.logAndPublishEvent("USER_LOCKED", actorId, u.getId(), null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of("reason", "admin_action")));
                 })
-                .thenReturn(ApiResponse.success(null, "User locked successfully."));
+                .thenReturn(ApiResponse.success((Void) null, "User locked successfully.")));
     }
 
     @PostMapping("/users/{id}/unlock")
     public Mono<ApiResponse<Void>> unlockUser(@PathVariable UUID id, ServerWebExchange exchange) {
-        return userRepository.findById(id)
+        return getActorId().flatMap(actorId -> userRepository.findById(id)
                 .switchIfEmpty(Mono.error(new IdentityException("User not found", "USER_NOT_FOUND", HttpStatus.NOT_FOUND)))
                 .flatMap(user -> {
                     user.setStatus("ACTIVE");
@@ -154,27 +159,33 @@ public class AdminController {
                     user.setFailedLoginAttempts(0);
                     user.setNotNew();
                     return userRepository.save(user)
-                            .flatMap(u -> auditService.logAndPublishEvent("USER_UNLOCKED", null, u.getId(), null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of()));
+                            .flatMap(u -> auditService.logAndPublishEvent("USER_UNLOCKED", actorId, u.getId(), null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of()));
                 })
-                .thenReturn(ApiResponse.success(null, "User unlocked successfully."));
+                .thenReturn(ApiResponse.success((Void) null, "User unlocked successfully.")));
     }
 
     @PostMapping("/users/{id}/roles/{roleName}")
     public Mono<ApiResponse<Void>> assignRole(@PathVariable UUID id, @PathVariable String roleName, ServerWebExchange exchange) {
-        return roleRepository.findByName(roleName)
+        return getActorId().flatMap(actorId -> roleRepository.findByName(roleName)
                 .switchIfEmpty(Mono.error(new IdentityException("Role not found", "ROLE_NOT_FOUND", HttpStatus.NOT_FOUND)))
                 .flatMap(role -> userRoleRepository.assignRole(id, role.getId())
-                        .then(auditService.logAndPublishEvent("ROLE_ASSIGNED", null, id, null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of("role", roleName))))
-                .thenReturn(ApiResponse.success(null, "Role assigned."));
+                        .then(auditService.logAndPublishEvent("ROLE_ASSIGNED", actorId, id, null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of("role", roleName))))
+                .thenReturn(ApiResponse.success((Void) null, "Role assigned.")));
     }
 
     @DeleteMapping("/users/{id}/roles/{roleName}")
     public Mono<ApiResponse<Void>> removeRole(@PathVariable UUID id, @PathVariable String roleName, ServerWebExchange exchange) {
-         return roleRepository.findByName(roleName)
+         return getActorId().flatMap(actorId -> roleRepository.findByName(roleName)
                 .switchIfEmpty(Mono.error(new IdentityException("Role not found", "ROLE_NOT_FOUND", HttpStatus.NOT_FOUND)))
                 .flatMap(role -> userRoleRepository.deleteRoleByUserIdAndRoleId(id, role.getId())
-                        .then(auditService.logAndPublishEvent("ROLE_REMOVED", null, id, null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of("role", roleName))))
-                .thenReturn(ApiResponse.success(null, "Role removed."));
+                        .then(auditService.logAndPublishEvent("ROLE_REMOVED", actorId, id, null, null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of("role", roleName))))
+                .thenReturn(ApiResponse.success((Void) null, "Role removed.")));
+    }
+
+    @DeleteMapping("/users/{id}/roles")
+    public Mono<ApiResponse<Void>> removeRoles(@PathVariable UUID id) {
+        return userRoleRepository.deleteRolesByUserId(id)
+                .thenReturn(ApiResponse.success(null, "Roles removed."));
     }
 
     @GetMapping("/users/{id}/sessions")
@@ -203,62 +214,63 @@ public class AdminController {
 
     @PostMapping("/clients")
     public Mono<ApiResponse<ClientResponse>> createClient(@Valid @RequestBody ClientRequest request, ServerWebExchange exchange) {
-        Mono<String> secretMono = Mono.justOrEmpty(request.clientSecret());
+        return getActorId().flatMap(actorId -> {
+            Mono<String> secretMono = Mono.justOrEmpty(request.clientSecret());
 
-        if ("CONFIDENTIAL".equals(request.clientType()) || "SERVICE".equals(request.clientType())) {
-            if (request.clientSecret() == null || request.clientSecret().isBlank()) {
-                return Mono.error(new IdentityException("Secret required for confidential clients", "SECRET_REQUIRED", HttpStatus.BAD_REQUEST));
+            if ("CONFIDENTIAL".equals(request.clientType()) || "SERVICE".equals(request.clientType())) {
+                if (request.clientSecret() == null || request.clientSecret().isBlank()) {
+                    return Mono.error(new IdentityException("Secret required for confidential clients", "SECRET_REQUIRED", HttpStatus.BAD_REQUEST));
+                }
+                secretMono = Mono.fromCallable(() -> passwordEncoder.encode(request.clientSecret()))
+                        .subscribeOn(Schedulers.boundedElastic());
             }
-            secretMono = Mono.fromCallable(() -> passwordEncoder.encode(request.clientSecret()))
-                    .subscribeOn(Schedulers.boundedElastic());
-        }
 
-        return secretMono
-                .defaultIfEmpty("")
-                .flatMap(secretHash -> {
-                    Client c = new Client();
-                    c.setId(UUID.randomUUID());
-                    c.setClientId(request.clientId());
-                    c.setClientName(request.clientName());
-                    c.setClientType(request.clientType());
-                    c.setClientSecretHash(secretHash.isEmpty() ? null : secretHash);
-                    c.setEnabled(true);
-                    c.setAllowedRedirectUrls(request.allowedRedirectUrls());
-                    c.setAllowedWebOrigins(request.allowedWebOrigins());
-                    c.setAccessTokenTtlSeconds(request.accessTokenTtlSeconds());
-                    c.setRefreshTokenTtlSeconds(request.refreshTokenTtlSeconds());
-                    c.setCreatedAt(Instant.now());
-                    c.setUpdatedAt(Instant.now());
-                    return clientRepository.save(c);
-                })
-                .flatMap(savedClient -> auditService.logAndPublishEvent("CLIENT_CREATED", null, null, savedClient.getId(), null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of("client_type", savedClient.getClientType()))
-                        .thenReturn(savedClient))
-                .map(savedClient -> {
-                    // Do not leak secret hash back
-                    savedClient.setClientSecretHash(null);
-                    return ApiResponse.success(ClientMapper.toResponse(savedClient));
-                });
+            return secretMono
+                    .defaultIfEmpty("")
+                    .flatMap(secretHash -> {
+                        Client c = new Client();
+                        c.setId(UUID.randomUUID());
+                        c.setClientId(request.clientId());
+                        c.setClientName(request.clientName());
+                        c.setClientType(request.clientType());
+                        c.setClientSecretHash(secretHash.isEmpty() ? null : secretHash);
+                        c.setEnabled(true);
+                        c.setAllowedRedirectUrls(request.allowedRedirectUrls());
+                        c.setAllowedWebOrigins(request.allowedWebOrigins());
+                        c.setAccessTokenTtlSeconds(request.accessTokenTtlSeconds());
+                        c.setRefreshTokenTtlSeconds(request.refreshTokenTtlSeconds());
+                        c.setCreatedAt(Instant.now());
+                        c.setUpdatedAt(Instant.now());
+                        return clientRepository.save(c);
+                    })
+                    .flatMap(savedClient -> auditService.logAndPublishEvent("CLIENT_CREATED", actorId, null, savedClient.getId(), null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of("client_type", savedClient.getClientType()))
+                            .thenReturn(savedClient))
+                    .map(savedClient -> {
+                        savedClient.setClientSecretHash(null);
+                        return ApiResponse.success(ClientMapper.toResponse(savedClient));
+                    });
+        });
     }
 
     @PostMapping("/clients/{id}/enable")
     public Mono<ApiResponse<Void>> enableClient(@PathVariable UUID id, ServerWebExchange exchange) {
-        return clientRepository.findById(id)
+        return getActorId().flatMap(actorId -> clientRepository.findById(id)
                 .flatMap(c -> {
                     c.setEnabled(true);
                     c.setNotNew();
                     return clientRepository.save(c)
-                            .flatMap(s -> auditService.logAndPublishEvent("CLIENT_ENABLED", null, null, c.getId(), null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of()));
-                }).thenReturn(ApiResponse.success(null, "Client enabled."));
+                            .flatMap(s -> auditService.logAndPublishEvent("CLIENT_ENABLED", actorId, null, c.getId(), null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of()));
+                }).thenReturn(ApiResponse.success((Void) null, "Client enabled.")));
     }
 
     @PostMapping("/clients/{id}/disable")
     public Mono<ApiResponse<Void>> disableClient(@PathVariable UUID id, ServerWebExchange exchange) {
-        return clientRepository.findById(id)
+        return getActorId().flatMap(actorId -> clientRepository.findById(id)
                 .flatMap(c -> {
                     c.setEnabled(false);
                     c.setNotNew();
                     return clientRepository.save(c)
-                            .flatMap(s -> auditService.logAndPublishEvent("CLIENT_DISABLED", null, null, c.getId(), null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of()));
-                }).thenReturn(ApiResponse.success(null, "Client disabled."));
+                            .flatMap(s -> auditService.logAndPublishEvent("CLIENT_DISABLED", actorId, null, c.getId(), null, getIp(exchange), getUa(exchange), getCorrelationId(exchange), getRequestId(exchange), Map.of()));
+                }).thenReturn(ApiResponse.success((Void) null, "Client disabled.")));
     }
 }
