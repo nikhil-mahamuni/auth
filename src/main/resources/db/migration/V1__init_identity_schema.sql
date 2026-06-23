@@ -1,14 +1,30 @@
 CREATE EXTENSION IF NOT EXISTS citext;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+CREATE OR REPLACE FUNCTION identity_set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
 CREATE TABLE identity_users (
     id UUID PRIMARY KEY,
     email CITEXT NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
+    password_algorithm VARCHAR(50) NOT NULL DEFAULT 'bcrypt',
     first_name VARCHAR(100),
     last_name VARCHAR(100),
     display_name VARCHAR(100),
     avatar_url VARCHAR(512),
+    phone VARCHAR(50),
+    phone_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    locale VARCHAR(20),
+    timezone VARCHAR(50),
+    deleted_at TIMESTAMP WITH TIME ZONE,
     user_type VARCHAR(50) NOT NULL DEFAULT 'PUBLIC_USER',
     status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
@@ -109,7 +125,11 @@ CREATE TABLE identity_refresh_tokens (
     user_id UUID NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
     client_id UUID NOT NULL REFERENCES identity_clients(id) ON DELETE CASCADE,
     status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
-    issued_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    requested_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    used_at TIMESTAMP WITH TIME ZONE,
+    ip_address VARCHAR(45),
+    user_agent VARCHAR(512),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     last_used_at TIMESTAMP WITH TIME ZONE,
     rotated_at TIMESTAMP WITH TIME ZONE,
@@ -125,7 +145,11 @@ CREATE TABLE identity_email_verification_tokens (
     id UUID PRIMARY KEY,
     token_hash VARCHAR(255) NOT NULL UNIQUE,
     user_id UUID NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
-    issued_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    requested_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    used_at TIMESTAMP WITH TIME ZONE,
+    ip_address VARCHAR(45),
+    user_agent VARCHAR(512),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
     CONSTRAINT valid_evt_status CHECK (status IN ('ACTIVE', 'USED', 'EXPIRED', 'REVOKED'))
@@ -135,7 +159,11 @@ CREATE TABLE identity_password_reset_tokens (
     id UUID PRIMARY KEY,
     token_hash VARCHAR(255) NOT NULL UNIQUE,
     user_id UUID NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
-    issued_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    requested_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    used_at TIMESTAMP WITH TIME ZONE,
+    ip_address VARCHAR(45),
+    user_agent VARCHAR(512),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
     CONSTRAINT valid_prt_status CHECK (status IN ('ACTIVE', 'USED', 'EXPIRED', 'REVOKED'))
@@ -258,3 +286,8 @@ INSERT INTO identity_roles (id, name, description) VALUES (gen_random_uuid(), 'R
 
 INSERT INTO identity_clients (id, client_id, client_name, client_type, status, token_endpoint_auth_method)
 VALUES (gen_random_uuid(), 'dev-client', 'Development Client', 'PUBLIC', 'ACTIVE', 'none');
+
+CREATE TRIGGER set_identity_users_updated_at BEFORE UPDATE ON identity_users FOR EACH ROW EXECUTE FUNCTION identity_set_updated_at();
+CREATE TRIGGER set_identity_clients_updated_at BEFORE UPDATE ON identity_clients FOR EACH ROW EXECUTE FUNCTION identity_set_updated_at();
+CREATE TRIGGER set_identity_organizations_updated_at BEFORE UPDATE ON identity_organizations FOR EACH ROW EXECUTE FUNCTION identity_set_updated_at();
+CREATE TRIGGER set_identity_provider_configs_updated_at BEFORE UPDATE ON identity_provider_configs FOR EACH ROW EXECUTE FUNCTION identity_set_updated_at();

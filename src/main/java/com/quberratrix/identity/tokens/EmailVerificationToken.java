@@ -18,7 +18,11 @@ public class EmailVerificationToken extends PersistableEntity {
     private UUID id;
     private String tokenHash;
     private UUID userId;
-    private Instant issuedAt;
+    private Instant requestedAt;
+    private Instant usedAt;
+    private String ipAddress;
+    private String userAgent;
+    private Instant createdAt;
     private Instant expiresAt;
     private String status;
 }

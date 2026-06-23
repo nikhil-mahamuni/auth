@@ -61,7 +61,10 @@ public class TokenServices {
                     token.setId(UUID.randomUUID());
                     token.setTokenHash(hashedToken);
                     token.setUserId(user.getId());
-                    token.setIssuedAt(Instant.now());
+                    token.setRequestedAt(Instant.now());
+                    token.setCreatedAt(Instant.now());
+                    token.setIpAddress(ipAddress);
+                    token.setUserAgent(userAgent);
                     token.setExpiresAt(Instant.now().plusSeconds(tokenProperties.getEmailVerificationTokenTtl().getSeconds()));
                     token.setStatus("ACTIVE");
 
@@ -116,7 +119,10 @@ public class TokenServices {
                     token.setId(UUID.randomUUID());
                     token.setTokenHash(hashedToken);
                     token.setUserId(user.getId());
-                    token.setIssuedAt(Instant.now());
+                    token.setRequestedAt(Instant.now());
+                    token.setCreatedAt(Instant.now());
+                    token.setIpAddress(ipAddress);
+                    token.setUserAgent(userAgent);
                     token.setExpiresAt(Instant.now().plusSeconds(tokenProperties.getPasswordResetTokenTtl().getSeconds()));
                     token.setStatus("ACTIVE");
 

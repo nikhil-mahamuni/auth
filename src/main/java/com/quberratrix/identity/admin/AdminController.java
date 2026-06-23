@@ -183,9 +183,6 @@ public class AdminController {
     }
 
     @DeleteMapping("/users/{id}/roles")
-    public Mono<ApiResponse<Void>> removeRoles(@PathVariable UUID id) {
-        return userRoleRepository.deleteRolesByUserId(id)
-                .thenReturn(ApiResponse.success(null, "Roles removed."));
     }
 
     @GetMapping("/users/{id}/sessions")

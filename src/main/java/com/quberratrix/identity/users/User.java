@@ -21,6 +21,12 @@ public class User extends PersistableEntity {
     private String lastName;
     private String displayName;
     private String avatarUrl;
+    private String phone;
+    private boolean phoneVerified;
+    private String locale;
+    private String timezone;
+    private String passwordAlgorithm;
+    private Instant deletedAt;
     private String userType;
     private String status;
     private boolean emailVerified;
